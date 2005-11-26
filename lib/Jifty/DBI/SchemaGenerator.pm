@@ -201,7 +201,8 @@ sub _db_schema_table_from_model {
             DBIx::DBSchema::Column->new(
             {   name    => $column->name,
                 type    => $column->type,
-                null    => $column->null,
+                null    => $column->mandatory ? 0 : 1,
+                distinct    => $column->distinct,
                 default => $column->default,
             }
             );
