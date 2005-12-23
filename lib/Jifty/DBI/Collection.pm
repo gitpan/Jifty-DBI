@@ -52,6 +52,7 @@ name for the class -- see the L</SYNOPSIS> for an example.
 use vars qw($VERSION);
 
 use Data::Page;
+use Clone;
 use base qw/Class::Accessor/;
 __PACKAGE__->mk_accessors(qw/pager/);
 
@@ -101,7 +102,6 @@ sub _init {
         @_
     );
     $self->_handle( $args{'handle'} ) if ($args{'handle'});
-    $self->_init_pager();
     $self->clean_slate();
 }
 
@@ -127,6 +127,7 @@ cleaner to accomplish that in a different way, though.
 sub clean_slate {
     my $self = shift;
     $self->redo_search();
+    $self->_init_pager();
     $self->{'itemscount'}       = 0;
     $self->{'tables'}           = "";
     $self->{'auxillary_tables'} = "";
@@ -149,11 +150,18 @@ sub clean_slate {
         _close_parens
     );
 
-    # Force ourselves to have no limit statements. do_search won't
-    # work.
+    $self->implicit_clauses();
     $self->_is_limited(0);
 } 
 
+=head2 implicit_clauses
+
+Called by L</clean_slate> to set up any implicit clauses that the
+collection B<always> has.  Defaults to doing nothing.
+
+=cut
+
+sub implicit_clauses {}
 
 =head2 _handle [DBH]
 
@@ -283,17 +291,7 @@ is returned.
 sub _distinct_query {
     my $self         = shift;
     my $statementref = shift;
-    my $table        = shift;
-
-    # XXX - Postgres gets unhappy with distinct and order_by aliases
-    if ( exists $self->{'order_clause'}
-        && $self->{'order_clause'} =~ /(?<!main)\./ )
-    {
-        $$statementref = "SELECT main.* FROM $$statementref";
-    }
-    else {
-        $self->_handle->distinct_query( $statementref, $table );
-    }
+    $self->_handle->distinct_query($statementref, $self);
 }
 
 =head2 _build_joins
@@ -381,16 +379,14 @@ sub build_select_query {
         $query_string .= $self->_where_clause . " "
     }
     if ( $self->_is_joined ) {
-        # DISTINCT query only required for multi-table selects
-        $self->_distinct_query( \$query_string, $self->table );
-    }
-    else {
-        $query_string = "SELECT main.* FROM $query_string";
-    }
-
-    $query_string .= ' ' . $self->_group_clause . ' ';
-
-    $query_string .= ' ' . $self->_order_clause . ' ';
+     # DISTINCT query only required for multi-table selects
+        $self->_distinct_query(\$query_string);
+     } else {
+         $query_string = "SELECT main.* FROM $query_string";
+        $query_string .= $self->_group_clause;
+        $query_string .= $self->_order_clause;
+     }
+ 
 
     $self->_apply_limits( \$query_string );
 
@@ -541,7 +537,7 @@ sub new_item {
 
 Returns the record class which this is a collection of; override this
 to subclass.  Or, pass it the name of a class an an argument after
-creating a C<JFDI::Collection> object to create an 'anonymous'
+creating a C<Jifty::DBI::Collection> object to create an 'anonymous'
 collection class.
 
 If you haven't specified a record class, this eturns a best guess at
@@ -561,7 +557,7 @@ sub record_class {
     }
     elsif ( not $self->{record_class} ) {
         my $class = ref($self);
-        $class =~ s/Collection$//;
+        $class =~ s/Collection$// or die "Can't guess record class from $class";
         $self->{record_class} = $class;
     }
     return $self->{record_class};
@@ -577,6 +573,8 @@ it's asked for a record, it should requery the database
 sub redo_search {
     my $self = shift;
     $self->{'must_redo_search'} = 1;
+    delete $self->{$_} for qw(items raw_rows count_all);
+    $self->{'itemscount'} = 0;
 }
 
 =head2 unlimit
@@ -588,6 +586,8 @@ rows in the primary table.
 
 sub unlimit {
     my $self = shift;
+    
+    $self->clean_slate();
     $self->_is_limited(-1);
 }
 
@@ -659,8 +659,8 @@ sub limit {
     my $self = shift;
     my %args = (
         table            => $self->table,
-        column           => 'fuck',
-        value            => 'hate',
+        column           => undef,
+        value            => undef,
         alias            => undef,
         quote_value      => 1,
         entry_aggregator => 'or',
@@ -672,6 +672,12 @@ sub limit {
     );
 
     my ($Alias);
+
+    # We need to be passed a column and a value, at very least
+    die "Must provide a column to limit"
+      unless defined $args{column};
+    die "Must provide a value to limit to"
+      unless defined $args{value};
 
     #since we're changing the search criteria, we need to redo the search
     $self->redo_search();
@@ -941,19 +947,31 @@ The results would be unordered if method called without arguments.
 =cut
 
 sub order_by {
-    my $self = shift;
-
-    my @args = @_;
-    unless (@args) {
-        return $self->_set_clause( order => '' );
-    }
-
+     my $self = shift;
+     my @args = @_;
+ 
     unless ( UNIVERSAL::isa( $args[0], 'HASH' ) ) {
         @args = {@args};
     }
+    $self->{'order_by'} = \@args;
+    $self->redo_search();
+}
+
+
+
+=head2 _order_clause
+
+returns the ORDER BY clause for the search.
+
+=cut
+
+sub _order_clause {
+    my $self = shift;
+
+    return '' unless $self->{'order_by'};
 
     my $clause = '';
-    foreach my $row (@args) {
+    foreach my $row ( @{$self->{'order_by'}} ) {
 
         my %rowhash = (
             alias  => 'main',
@@ -984,22 +1002,10 @@ sub order_by {
             $clause .= $rowhash{'order'};
         }
     }
-    $clause = "ORDER BY$clause" if $clause;
-    $self->_set_clause( order => $clause );
+    $clause = " ORDER BY$clause " if $clause;
+    return $clause;
 }
 
-=head2 _order_clause
-
-returns the ORDER BY clause for the search.
-
-=cut
-
-sub _order_clause {
-    my $self = shift;
-
-    return '' unless $self->{'order_clause'};
-    return ( $self->{'order_clause'} );
-}
 
 =head2 group_by_cols DEPRECATED
 
@@ -1013,7 +1019,7 @@ sub group_by_cols {
     goto &group_by;
 }
 
-=head2 group_by_cols EMPTY|HASH|ARRAY_OF_HASHES
+=head2 group_by EMPTY|HASH|ARRAY_OF_HASHES
 
 Groups the search results by column(s) and/or function(s) on column(s).
 
@@ -1036,17 +1042,33 @@ sub group_by {
     my $self = shift;
 
     my @args = @_;
-    unless (@args) {
-        return $self->_set_clause( group => '' );
-    }
+
     unless ( UNIVERSAL::isa( $args[0], 'HASH' ) ) {
         @args = {@args};
     }
+    $self->{'group_by'} = \@args;
+    $self->redo_search();
+}
 
-    my $clause = '';
-    foreach my $row (@args) {
-        my %rowhash = (
-            alias  => 'main',
+
+=head2 _group_clause
+
+Private function to return the "GROUP BY" clause for this query.
+
+=cut
+
+sub _group_clause {
+    my $self = shift;
+    return '' unless $self->{'group_by'};
+
+     my $row;
+     my $clause;
+ 
+    foreach $row ( @{$self->{'group_by'}} ) {
+         my %rowhash = ( alias => 'main',
+
+
+
             column => undef,
             %$row
         );
@@ -1064,22 +1086,12 @@ sub group_by {
             $clause .= $rowhash{'column'};
         }
     }
-
-    $clause = "GROUP BY" . $clause if $clause;
-    return $self->_set_clause( group => $clause );
-}
-
-=head2 _group_clause
-
-Private function to return the "GROUP BY" clause for this query.
-
-=cut
-
-sub _group_clause {
-    my $self = shift;
-
-    return '' unless $self->{'group_clause'};
-    return ( $self->{'group_clause'} );
+     if ($clause) {
+	return " GROUP BY" . $clause . " ";
+     }
+     else {
+	return '';
+     }
 }
 
 =head2 new_alias table_OR_CLASS
@@ -1132,20 +1144,23 @@ sub _get_alias {
 
 Join instructs Jifty::DBI::Collection to join two tables.  
 
-The standard form takes a param hash with keys alias1, column1, alias2
-and column2. alias1 and alias2 are column aliases obtained from
-$self->new_alias or a $self->limit. column1 and column2 are the columns 
-in alias1 and alias2 that should be linked, respectively.  For this
+The standard form takes a param hash with keys C<alias1>, C<column1>, C<alias2>
+and C<column2>. C<alias1> and C<alias2> are column aliases obtained from
+$self->new_alias or a $self->limit. C<column1> and C<column2> are the columns 
+in C<alias1> and C<alias2> that should be linked, respectively.  For this
 type of join, this method has no return value.
 
-Supplying the parameter type => 'left' causes Join to preform a left
-join.  in this case, it takes alias1, column1, table2 and
-column2. Because of the way that left joins work, this method needs a
+Supplying the parameter C<type> => 'left' causes Join to preform a left
+join.  in this case, it takes C<alias1>, C<column1>, C<table2> and
+C<column2>. Because of the way that left joins work, this method needs a
 table for the second column rather than merely an alias.  For this type
 of join, it will return the alias generated by the join.
 
-Instead of alias1/column1, it's possible to specify expression, to join
-alias2/table2 on an arbitrary expression.
+The parameter C<operator> defaults C<=>, but you can specity other
+operators to join with.
+
+Instead of C<alias1>/C<column1>, it's possible to specify expression, to join
+C<alias2>/C<table2> on an arbitrary expression.
 
 =cut
 
@@ -1494,6 +1509,47 @@ sub refers_to (@) {
     return ( refers_to => $class, %args );
 }
 
+
+=head2 Clone
+
+Returns copy of the current object with all search restrictions.
+
+=cut
+
+sub clone
+{
+    my $self = shift;
+
+    my $obj = bless {}, ref($self);
+    %$obj = %$self;
+
+    $obj->redo_search(); # clean out the object of data
+    
+    $obj->{$_} = Clone::clone($obj->{$_}) for ( $self->_cloned_attributes );
+    return $obj;
+}
+
+=head2 _cloned_attributes
+
+Returns list of the object's fields that should be copied.
+
+If your subclass store references in the object that should be copied while
+clonning then you probably want override this method and add own values to
+the list.
+
+=cut
+ 
+sub _cloned_attributes
+{
+    return qw(
+        aliases
+        left_joins
+        subclauses
+        restrictions
+    );
+ }
+ 
+ 
 1;
 __END__
 
@@ -1531,7 +1587,4 @@ and/or modify it under the same terms as Perl itself.
 Jifty::DBI::Handle, Jifty::DBI::Record.
 
 =cut
-
-
-
 

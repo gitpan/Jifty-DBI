@@ -678,24 +678,30 @@ If this method is passed a true argument, stack depth is blown away and the oute
 =cut
 
 sub rollback {
-    my $self  = shift;
-    my $force = shift || undef;
+     my $self = shift;
+    my $force = shift;
 
-#unless ($TRANSDEPTH) {Carp::confess("Attempted to rollback a transaction with none in progress")};
-    $TRANSDEPTH--;
-
-    if ($force) {
+   my $dbh = $self->dbh;
+    unless( $dbh ) {
         $TRANSDEPTH = 0;
-        return ( $self->dbh->rollback );
+        return;
     }
+ 
+    #unless ($TRANSDEPTH) {Carp::confess("Attempted to rollback a transaction with none in progress")};
+     if ($force) {
+         $TRANSDEPTH = 0;
+        return($dbh->rollback);
+     }
+ 
+    $TRANSDEPTH-- if ($TRANSDEPTH >= 1);
+     if ($TRANSDEPTH == 0 ) {
+        return($dbh->rollback);
+     } else { #we're inside a transaction
+         return($TRANSDEPTH);
+     }
 
-    if ( $TRANSDEPTH == 0 ) {
-        return ( $self->dbh->rollback );
-    }
-    else {    #we're inside a transaction
-        return ($TRANSDEPTH);
-    }
 }
+
 
 =head2 force_rollback
 
@@ -748,8 +754,8 @@ sub apply_limits {
 
 =head2 join { Paramhash }
 
-Takes a paramhash of everything Searchbuildler::Record does plus a
-parameter called 'collection' that contains a ref to a
+Takes a paramhash of everything Jifty::DBI::Collection's C<join> method
+takes, plus a parameter called C<collection> that contains a ref to a
 L<Jifty::DBI::Collection> object'.
 
 This performs the join.
@@ -769,6 +775,7 @@ sub join {
         column2    => undef,
         alias2     => undef,
         expression => undef,
+        operator   => '=',
         @_
     );
 
@@ -861,7 +868,7 @@ sub join {
         = $args{'alias1'};
     $args{'collection'}->{'leftjoins'}{"$alias"}{'criteria'}
         { 'criterion' . $args{'collection'}->{'criteria_count'}++ }
-        = " $alias.$args{'column2'} = $criterion";
+        = " $criterion $args{'operator'} $alias.$args{'column2'}";
 
     return ($alias);
 }
@@ -877,6 +884,7 @@ sub _normal_join {
         table2     => undef,
         column2    => undef,
         alias2     => undef,
+        operator   => '=',
         @_
     );
 
@@ -889,7 +897,7 @@ sub _normal_join {
             = " LEFT JOIN $args{'table2'} $alias ";
 
         $sb->{'leftjoins'}{"$alias"}{'criteria'}{'base_criterion'}
-            = " $args{'alias1'}.$args{'column1'} = $alias.$args{'column2'}";
+            = " $args{'alias1'}.$args{'column1'} $args{'operator'} $alias.$args{'column2'}";
 
         return ($alias);
     }
@@ -962,15 +970,17 @@ takes an incomplete SQL SELECT statement and massages it to return a DISTINCT re
 =cut
 
 sub distinct_query {
-    my $self         = shift;
+    my $self = shift;
     my $statementref = shift;
+    my $sb = shift;
+ 
+     # Prepend select query for DBs which allow DISTINCT on all column types.
+     $$statementref = "SELECT DISTINCT main.* FROM $$statementref";
 
-    #my $table = shift;
-
-    # Prepend select query for DBs which allow DISTINCT on all column types.
-    $$statementref = "SELECT DISTINCT main.* FROM $$statementref";
-
+    $$statementref .= $sb->_group_clause;
+    $$statementref .= $sb->_order_clause;
 }
+ 
 
 =head2 distinct_count STATEMENTREF 
 

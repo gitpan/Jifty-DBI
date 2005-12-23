@@ -284,6 +284,7 @@ sub _to_record {
 
     my $column    = $self->column($column_name);
     my $classname = $column->refers_to();
+    my $remote_column = $column->by() || 'id';
 
     return       unless defined $value;
     return undef unless $classname;
@@ -292,7 +293,7 @@ sub _to_record {
     # XXX TODO FIXME we need to figure out the right way to call new here
     # perhaps the handle should have an initiializer for records/collections
     my $object = $classname->new( $self->_handle );
-    $object->load_by_cols( id => $value );
+    $object->load_by_cols($remote_column => $value );
     return $object;
 }
 
@@ -309,7 +310,7 @@ sub _collection_value {
     return unless UNIVERSAL::isa( $classname, 'Jifty::DBI::Collection' );
 
     my $coll = $classname->new( handle => $self->_handle );
-    $coll->limit( column => $column->by(), value => $self->id );
+    $coll->limit( column =>  $column->by(), value => $self->id );
     return $coll;
 }
 
@@ -341,7 +342,9 @@ sub column {
 
 sub columns {
     my $self = shift;
-    return ( values %{ $self->COLUMNS } );
+    return ( sort { 
+         ((($b->type||'') eq 'serial') <=> (($a->type||'') eq 'serial')) or 
+            ( $a->name cmp $b->name) } values %{ $self->COLUMNS } );
 }
 
 # sub {{{ readable_attributes
@@ -381,7 +384,7 @@ sub __value {
     my $column_name = shift;
 
     # If the requested column is actually an alias for another, resolve it.
-    while ( $self->column($column_name)
+    if ( $self->column($column_name)
         and defined $self->column($column_name)->alias_for_column )
     {
         $column_name = $self->column($column_name)->alias_for_column();
@@ -606,6 +609,8 @@ is $id
 
 sub load {
     my $self = shift;
+
+    return unless @_ and defined $_[0];
 
     return $self->load_by_cols( id => shift );
 }
