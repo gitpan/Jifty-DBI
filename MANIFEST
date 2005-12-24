@@ -59,4 +59,3 @@ t/11schema_records.t
 t/pod.t
 t/testmodels.pl
 t/utils.pl
-SIGNATURE                                Public-key signature (added by MakeMaker)
