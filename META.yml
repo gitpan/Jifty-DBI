@@ -1,5 +1,5 @@
 name: Jifty-DBI
-version: 0.08
+version: 0.09
 license: perl
 distribution_type: module
 build_requires:
@@ -13,6 +13,7 @@ requires:
   UNIVERSAL::require: 0
   Lingua::EN::Inflect: 0
   Class::ReturnValue: 0.4
+  Class::Data::Inheritable: 0
   Class::Accessor: 0
   Clone: 0
   Cache::Simple::TimedExpiry: 0.21
@@ -21,5 +22,7 @@ requires:
   DateTime::Format::Strptime: 0
 no_index:
   directory:
+    - t
+    - ex
     - inc
 generated_by: Module::Install version 0.46
