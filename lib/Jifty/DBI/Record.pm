@@ -16,7 +16,6 @@ use base qw/
 
 our $VERSION = '0.01';
 
-
 Jifty::DBI::Record->mk_classdata('COLUMNS');
 
 =head1 NAME
@@ -120,18 +119,15 @@ sub AUTOLOAD {
                 $_[0]->_to_record( $column_name,
                     $_[0]->__value($column_name) );
             };
-        }
-        elsif (
+        } elsif (
             UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Collection" ) )
         {
             *{$AUTOLOAD} = sub { $_[0]->_collection_value($column_name) };
-        }
-        else {
+        } else {
             *{$AUTOLOAD} = sub { return ( $_[0]->_value($column_name) ) };
         }
         goto &$AUTOLOAD;
-    }
-    elsif ( $action eq 'write' ) {
+    } elsif ( $action eq 'write' ) {
         return ( 0, 'Immutable column' ) unless $column->writable;
 
         if ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) ) {
@@ -144,16 +140,14 @@ sub AUTOLOAD {
                 return (
                     $self->_set( column => $column_name, value => $val ) );
             };
-        }
-        else {
+        } else {
             *{$AUTOLOAD} = sub {
                 return (
                     $_[0]->_set( column => $column_name, value => $_[1] ) );
             };
         }
         goto &$AUTOLOAD;
-    }
-    elsif ( $action eq 'validate' ) {
+    } elsif ( $action eq 'validate' ) {
         *{$AUTOLOAD}
             = sub { return ( $_[0]->_validate( $column_name, $_[1] ) ) };
         goto &$AUTOLOAD;
@@ -184,13 +178,11 @@ sub _parse_autoload_method {
     if ( $method =~ /^.*::set_(\w+)$/o ) {
         $column_name = $1;
         $action      = 'write';
-    }
-    elsif ( $method =~ /^.*::validate_(\w+)$/o ) {
+    } elsif ( $method =~ /^.*::validate_(\w+)$/o ) {
         $column_name = $1;
         $action      = 'validate';
 
-    }
-    elsif ( $method =~ /^.*::(\w+)$/o ) {
+    } elsif ( $method =~ /^.*::(\w+)$/o ) {
         $column_name = $1;
         $action      = 'read';
 
@@ -282,8 +274,8 @@ sub _to_record {
     my $column_name = shift;
     my $value       = shift;
 
-    my $column    = $self->column($column_name);
-    my $classname = $column->refers_to();
+    my $column        = $self->column($column_name);
+    my $classname     = $column->refers_to();
     my $remote_column = $column->by() || 'id';
 
     return       unless defined $value;
@@ -293,7 +285,7 @@ sub _to_record {
     # XXX TODO FIXME we need to figure out the right way to call new here
     # perhaps the handle should have an initiializer for records/collections
     my $object = $classname->new( $self->_handle );
-    $object->load_by_cols($remote_column => $value );
+    $object->load_by_cols( $remote_column => $value );
     return $object;
 }
 
@@ -310,7 +302,7 @@ sub _collection_value {
     return unless UNIVERSAL::isa( $classname, 'Jifty::DBI::Collection' );
 
     my $coll = $classname->new( handle => $self->_handle );
-    $coll->limit( column =>  $column->by(), value => $self->id );
+    $coll->limit( column => $column->by(), value => $self->id );
     return $coll;
 }
 
@@ -342,9 +334,13 @@ sub column {
 
 sub columns {
     my $self = shift;
-    return ( sort { 
-         ((($b->type||'') eq 'serial') <=> (($a->type||'') eq 'serial')) or 
-            ( $a->name cmp $b->name) } values %{ $self->COLUMNS } );
+    return (
+        sort {
+            ( ( ( $b->type || '' ) eq 'serial' )
+                <=> ( ( $a->type || '' ) eq 'serial' ) )
+                or ( $a->name cmp $b->name )
+            } values %{ $self->COLUMNS }
+    );
 }
 
 # sub {{{ readable_attributes
@@ -372,6 +368,85 @@ sub writable_attributes {
     return sort map { $_->name } grep { $_->writable } $self->columns;
 }
 
+=head2 record values
+
+As you've probably already noticed, C<Jifty::DBI::Record> autocreates methods for your
+standard get/set accessors. It also provides you with some hooks to massage the values
+being loaded or stored.
+
+When you fetch a record value by calling C<$my_record->some_field>, C<Jifty::DBI::Record>
+provides the following hook
+
+=over
+
+
+
+=item after_I<column_name>
+
+This hook is called with a reference to the value returned by Jifty::DBI. Its return value is discarded.
+
+=back
+
+When you set a value, C<Jifty::DBI> provides the following hooks
+
+=over
+
+=item before_set_I<column_name> PARAMHASH
+
+C<Jifty::DBI::Record> passes this function a reference to a paramhash composed of:
+
+=over
+
+=item column
+
+The name of the column we're updating.
+
+=item value
+
+The new value for I<column>.
+
+=item is_sql_function
+
+A boolean that, if true, indicates that I<value> is an SQL function, not just a value.
+
+=back
+
+If before_set_I<column_name> returns false, the new value isn't set.
+
+=item validate_I<column_name> VALUE
+
+This hook is called just before updating the database. It expects the
+actual new value you're trying to set I<column_name> to. It returns
+two values.  The first is a boolean with truth indicating success. The
+second is an optional message. Note that validate_I<column_name> may be
+called outside the context of a I<set> operation to validate a potential
+value. (The Jifty application framework uses this as part of its AJAX
+validation system.)
+
+
+=back
+
+
+=cut
+
+=head2 _value
+
+_value takes a single column name and returns that column's value for
+this row.  Subclasses can override _value to insert custom access
+control.
+
+=cut
+
+sub _value {
+    my $self   = shift;
+    my $column = shift;
+
+    my $value = $self->__value( $column => @_ );
+    my $method = "after_$column";
+    $self->$method( \$value ) if ( $self->can($method) );
+    return $value;
+}
+
 =head2 __value
 
 Takes a column name and returns that column's value. Subclasses should
@@ -397,7 +472,7 @@ sub __value {
     #Carp::confess unless ($column);
 
     if ( !$self->{'fetched'}{ $column->name } and my $id = $self->id() ) {
-        my $pkey        = $self->_primary_key();
+        my $pkey         = $self->_primary_key();
         my $query_string = "SELECT "
             . $column->name
             . " FROM "
@@ -423,24 +498,6 @@ sub __value {
     return $self->{'values'}{ $column->name };
 }
 
-=head2 _value
-
-_value takes a single column name and returns that column's value for
-this row.  Subclasses can override _value to insert custom access
-control.
-
-=cut
-
-sub _value {
-    my $self   = shift;
-    my $column = shift;
-
-    my $value = $self->__value( $column => @_ );
-    my $method = "after_$column";
-    $self->$method( \$value ) if ( $self->can($method) );
-    return $value;
-}
-
 =head2 _set
 
 _set takes a single column name and a single unquoted value.
@@ -459,8 +516,11 @@ sub _set {
     );
 
     my $method = "before_set_" . $args{column};
-    $self->$method( \%args ) if ( $self->can($method) );
-
+    if ( $self->can($method) ) {
+        my $before_set_ret = $self->$method( \%args );
+        return $before_set_ret
+            unless ($before_set_ret);
+    }
     return $self->__set(%args);
 
 }
@@ -514,8 +574,8 @@ sub __set {
     }
 
     my $method = "validate_" . $column->name;
-    my ($ok, $msg) = $self->$method( $args{'value'} );
-    unless ( $ok ) {
+    my ( $ok, $msg ) = $self->$method( $args{'value'} );
+    unless ($ok) {
         $ret->as_array( 0, 'Illegal value for ' . $column->name );
         $ret->as_error(
             errno        => 3,
@@ -565,8 +625,7 @@ sub __set {
 
         # XXX TODO primary_keys
         $self->load_by_cols( id => $self->id );
-    }
-    else {
+    } else {
         $self->{'values'}->{ $column->name } = $unmunged_value;
         $self->{'decoded'}{ $column->name } = 0;
     }
@@ -574,7 +633,7 @@ sub __set {
     return ( $ret->return_value );
 }
 
-=head2 _Validate column VALUE
+=head2 _validate column VALUE
 
 Validate that value will be an acceptable value for column. 
 
@@ -585,9 +644,9 @@ If it succeeds (which is always the case right now), returns true. Otherwise ret
 =cut
 
 sub _validate {
-    my $self  = shift;
+    my $self   = shift;
     my $column = shift;
-    my $value = shift;
+    my $value  = shift;
 
  #Check type of input
  #If it's null, are nulls permitted?
@@ -640,23 +699,20 @@ sub load_by_cols {
                 $op       = $hash{$key}->{operator};
                 $value    = $hash{$key}->{value};
                 $function = $hash{$key}->{function} || "?";
-            }
-            else {
+            } else {
                 $op    = '=';
                 $value = $hash{$key};
             }
 
             push @phrases, "$key $op $function";
             push @bind,    $value;
-        }
-        else {
+        } else {
             push @phrases, "($key IS NULL OR $key = ?)";
             my $column = $self->column($key);
 
             if ( $column->is_numeric ) {
                 push @bind, 0;
-            }
-            else {
+            } else {
                 push @bind, '';
             }
 
@@ -714,9 +770,9 @@ Load a record as the result of an SQL statement
 =cut
 
 sub _load_from_sql {
-    my $self        = shift;
+    my $self         = shift;
     my $query_string = shift;
-    my @bind_values = (@_);
+    my @bind_values  = (@_);
 
     my $sth = $self->_handle->simple_query( $query_string, @bind_values );
 
@@ -745,14 +801,31 @@ sub _load_from_sql {
     foreach my $f ( keys %{ $self->{'values'} } ) {
         $self->{'fetched'}{ lc $f } = 1;
     }
-    return ( 1, "Found Object" );
+    return ( 1, "Found object" );
 
 }
 
-=head2 create
+=head2 create PARAMHASH
 
-Takes an array of key-value pairs and drops any keys that aren't known
-as columns for this recordtype
+This method creates a new record with the values specified in the PARAMHASH.
+
+Keys that aren't known as columns for this record type are dropped.
+
+This method calls two hooks in your subclass:
+
+=over
+
+=item before_create
+
+This method is called before trying to create our row in the database. It's handed a reference to your paramhash. (That means it can modify your parameters on the fly).  C<before_create> returns a true or false value. If it returns false, the create is aborted. 
+
+=item after_create
+
+This method is called after attempting to insert the record into the database. It gets handed a reference to the return value of the insert. That'll either be a true value or a L<Class::ReturnValue>
+
+
+=back
+
 
 =cut 
 
@@ -760,7 +833,10 @@ sub create {
     my $self    = shift;
     my %attribs = @_;
 
-    $self->before_create( \%attribs ) if $self->can('before_create');
+    if ( $self->can('before_create') ) {
+        my $before_ret = $self->before_create( \%attribs );
+        return ($before_ret) unless ($before_ret);
+    }
 
     foreach my $column_name ( keys %attribs ) {
         my $column = $self->column($column_name);
@@ -796,7 +872,7 @@ sub create {
         }
     }
     my $ret = $self->_handle->insert( $self->table, %attribs );
-    $self->after_create($ret) if $self->can('after_create');
+    $self->after_create( \$ret ) if $self->can('after_create');
     return ($ret);
 }
 
@@ -805,11 +881,29 @@ sub create {
 Delete this record from the database. On failure return a
 Class::ReturnValue with the error. On success, return 1;
 
+This method has two hooks
+
+=over 
+
+=item before_delete
+
+This method is called before the record deletion, if it exists. It returns a boolean value. If the return value is false, it aborts the create and returns the return value from the hook.
+
+=item after_delete
+
+This method is called after deletion, with a reference to the return value 
+from the delete operation.
+
+=back
+
 =cut
 
 sub delete {
     my $self = shift;
-    $self->before_delete() if $self->can('before_delete');
+    if ( $self->can('before_delete') ) {
+        my $before_ret = $self->before_delete();
+        return $before_ret unless ($before_ret);
+    }
     my $ret = $self->__delete;
     $self->after_delete( \$ret ) if $self->can('after_delete');
     return ($ret);
@@ -833,12 +927,11 @@ sub __delete {
 
     $where =~ s/AND\s$//;
     my $query_string = "DELETE FROM " . $self->table . ' ' . $where;
-    my $return      = $self->_handle->simple_query( $query_string, @bind );
+    my $return       = $self->_handle->simple_query( $query_string, @bind );
 
     if ( UNIVERSAL::isa( 'Class::ReturnValue', $return ) ) {
         return ($return);
-    }
-    else {
+    } else {
         return (1);
     }
 }
@@ -975,11 +1068,13 @@ __END__
 
 =head1 AUTHOR
 
-Jesse Vincent, <jesse@fsck.com> 
+Jesse Vincent <jesse@bestpractical.com>, Alex Vandiver <alexmv@bestpractical.com>, David Glasser <glasser@bestpractical.com>, Ruslan Zakirov <ruslan.zakirov@gmail.com>
 
-Enhancements by Ivan Kohler, <ivan-rt@420.am>
+Based on DBIx::SearchBuilder::Record, whose credits read:
 
-Docs by Matt Knopp <mhat@netlag.com>
+ Jesse Vincent, <jesse@fsck.com> 
+ Enhancements by Ivan Kohler, <ivan-rt@420.am>
+ Docs by Matt Knopp <mhat@netlag.com>
 
 =head1 SEE ALSO
 
