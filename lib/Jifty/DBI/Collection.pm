@@ -313,7 +313,7 @@ together.
 
 sub _is_joined {
     my $self = shift;
-    if ( keys( %{ $self->{'leftjoins'} } ) ) {
+    if ( %{ $self->{'leftjoins'} } ) {
         return (1);
     } else {
         return ( @{ $self->{'aliases'} } );
@@ -604,7 +604,7 @@ criterias about the foreign table will be added.
 
 Column to be checked against.
 
-=item VALUE
+=item value
 
 Should always be set and will always be quoted. 
 
@@ -857,7 +857,7 @@ sub _where_clause {
     #Various subclauses.
 
     my @subclauses;
-    foreach my $subclause ( keys %{ $self->{'subclauses'} } ) {
+    foreach my $subclause ( sort keys %{ $self->{'subclauses'} } ) {
         push @subclauses, $self->{'subclauses'}{"$subclause"};
     }
 

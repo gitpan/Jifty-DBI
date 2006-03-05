@@ -1,11 +1,8 @@
+
+
 Revision history for Perl extension Jifty::DBI.
 
-0.11 Sun Jan 15 12:17:53 EST 2006
-
-* Fixed signatures
-
-0.10 Sun Jan 15 12:13:14 EST 2006
-
+* Added support for Memcached
 * Updated record docs to show hooks
 
 0.09 Thu Dec 29 07:56:30 EST 2005
