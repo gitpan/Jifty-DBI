@@ -568,7 +568,9 @@ sub __set {
             )
             || (   defined $args{'value'}
                 && defined $self->{'values'}{ $column->name }
-                && $args{'value'} eq $self->{'values'}{ $column->name } )
+		   # XXX: This is a bloody hack to stringify DateTime
+		   # and other objects for compares
+                && $args{value}."" eq "".$self->{'values'}{ $column->name } )
             )
         {
             $ret->as_array( 1, "That is already the current value" );
@@ -576,18 +578,19 @@ sub __set {
         }
     }
 
-    my $method = "validate_" . $column->name;
-    my ( $ok, $msg ) = $self->$method( $args{'value'} );
-    unless ($ok) {
-        $ret->as_array( 0, 'Illegal value for ' . $column->name );
-        $ret->as_error(
-            errno        => 3,
-            do_backtrace => 0,
-            message      => "Illegal value for " . $column->name
-        );
-        return ( $ret->return_value );
-    }
+    
 
+	my $method = "validate_" . $column->name;
+	my ( $ok, $msg ) = $self->$method( $args{'value'} );
+	unless ($ok) {
+	    $ret->as_array( 0, 'Illegal value for ' . $column->name );
+	    $ret->as_error(
+			   errno        => 3,
+			   do_backtrace => 0,
+			   message      => "Illegal value for " . $column->name
+			   );
+	    return ( $ret->return_value );
+	}
     # The blob handling will destroy $args{'Value'}. But we assign
     # that back to the object at the end. this works around that
     my $unmunged_value = $args{'value'};
@@ -965,6 +968,25 @@ sub table {
     return $self->TABLE_NAME();
 }
 
+=head2 collection_class
+
+Returns the collection class which this record belongs to; override this to
+subclass.  If you haven't specified a collection class, this returns a best
+guess at the name of the collection class for this collection.
+
+It uses a simple heuristic to determine the collection class name -- It
+appends "Collection" to its own name. If you want to name your records
+and collections differently, go right ahead, but don't say we didn't
+warn you.
+
+=cut
+
+sub collection_class {
+    my $self = shift;
+    my $class = ref($self) || $self;
+    $class . 'Collection';
+}
+
 =head2 _guess_table_name
 
 Guesses a table name based on the class's last part.
@@ -1006,11 +1028,9 @@ used for the declarative syntax
 
 =cut
 
-sub refers_to (@) {
+sub refers_to {
     my $class = shift;
-    my (%args) = @_;
-
-    return ( refers_to => $class, %args );
+    return ( Jifty::DBI::Schema::Trait->new(refers_to => $class), @_ );
 }
 
 sub _filters {
