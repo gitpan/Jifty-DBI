@@ -2,7 +2,7 @@ package Jifty::DBI;
 use warnings;
 use strict;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 =head1 NAME
 
@@ -113,12 +113,12 @@ is the object I just created.
 
   
   my $handle = Jifty::DBI::Handle->new();
-  $handle->Connect(
-      Driver   => 'Pg',
-      Database => 'test',
-      Host     => 'reason',
-      User     => 'mhat',
-      Password => ''
+  $handle->connect(
+      driver   => 'Pg',
+      database => 'test',
+      host     => 'reason',
+      user     => 'mhat',
+      password => ''
   );
   
 Creates a new Jifty::DBI::Handle, and then connects to the database using 

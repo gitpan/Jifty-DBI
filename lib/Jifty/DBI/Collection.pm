@@ -52,6 +52,7 @@ use vars qw($VERSION);
 
 use Data::Page;
 use Clone;
+use Carp qw/croak/;
 use base qw/Class::Accessor/;
 __PACKAGE__->mk_accessors(qw/pager/);
 
@@ -666,9 +667,9 @@ sub limit {
     my ($Alias);
 
     # We need to be passed a column and a value, at very least
-    die "Must provide a column to limit"
+    croak "Must provide a column to limit"
         unless defined $args{column};
-    die "Must provide a value to limit to"
+    croak "Must provide a value to limit to"
         unless defined $args{value};
 
     #since we're changing the search criteria, we need to redo the search
@@ -1178,7 +1179,7 @@ sub set_page_info {
         ->current_page( $args{'current_page'} );
 
     $self->rows_per_page( $args{'per_page'} );
-    $self->first_row( $self->pager->first );
+    $self->first_row( $self->pager->first ||1 );
 
 }
 

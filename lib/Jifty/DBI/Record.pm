@@ -339,7 +339,7 @@ sub columns {
         sort {
             ( ( ( $b->type || '' ) eq 'serial' )
                 <=> ( ( $a->type || '' ) eq 'serial' ) )
-                or ( $a->sort_order <=> $b->sort_order)
+                or ( ($a->sort_order || 0) <=> ($b->sort_order || 0))
                 or ( $a->name cmp $b->name )
             } values %{ $self->COLUMNS }
     );
@@ -460,20 +460,23 @@ never override __value.
 
 sub __value {
     my $self        = shift;
-    my $column_name = shift;
+    my $column_name = lc(shift);
+
+    # In the default case of "yeah, we have a value", return it as
+    # fast as we can.
+    return   $self->{'values'}{$column_name}
+        if ( $self->{'fetched'}{$column_name}
+          && $self->{'decoded'}{$column_name} );
 
     # If the requested column is actually an alias for another, resolve it.
     if ( $self->column($column_name)
-        and defined $self->column($column_name)->alias_for_column )
-    {
+        and defined $self->column($column_name)->alias_for_column ) {
         $column_name = $self->column($column_name)->alias_for_column();
     }
 
     my $column = $self->column($column_name);
 
     return unless ($column);
-
-    #Carp::confess unless ($column);
 
     if ( !$self->{'fetched'}{ $column->name } and my $id = $self->id() ) {
         my $pkey         = $self->_primary_key();
@@ -489,9 +492,7 @@ sub __value {
         $self->{'values'}{ $column->name }  = $value;
         $self->{'fetched'}{ $column->name } = 1;
     }
-    if ( $self->{'fetched'}{ $column->name }
-        && !$self->{'decoded'}{ $column->name } )
-    {
+    unless ( $self->{'decoded'}{ $column->name } ) {
         $self->_apply_output_filters(
             column    => $column,
             value_ref => \$self->{'values'}{ $column->name },
@@ -569,9 +570,13 @@ sub __set {
             )
             || (   defined $args{'value'}
                 && defined $self->{'values'}{ $column->name }
-		   # XXX: This is a bloody hack to stringify DateTime
-		   # and other objects for compares
-                && $args{value}."" eq "".$self->{'values'}{ $column->name } )
+
+                # XXX: This is a bloody hack to stringify DateTime
+                # and other objects for compares
+                && $args{value}
+                . "" eq ""
+                . $self->{'values'}{ $column->name }
+            )
             )
         {
             $ret->as_array( 1, "That is already the current value" );
@@ -579,19 +584,18 @@ sub __set {
         }
     }
 
-    
+    my $method = "validate_" . $column->name;
+    my ( $ok, $msg ) = $self->$method( $args{'value'} );
+    unless ($ok) {
+        $ret->as_array( 0, 'Illegal value for ' . $column->name );
+        $ret->as_error(
+            errno        => 3,
+            do_backtrace => 0,
+            message      => "Illegal value for " . $column->name
+        );
+        return ( $ret->return_value );
+    }
 
-	my $method = "validate_" . $column->name;
-	my ( $ok, $msg ) = $self->$method( $args{'value'} );
-	unless ($ok) {
-	    $ret->as_array( 0, 'Illegal value for ' . $column->name );
-	    $ret->as_error(
-			   errno        => 3,
-			   do_backtrace => 0,
-			   message      => "Illegal value for " . $column->name
-			   );
-	    return ( $ret->return_value );
-	}
     # The blob handling will destroy $args{'Value'}. But we assign
     # that back to the object at the end. this works around that
     my $unmunged_value = $args{'value'};
@@ -611,8 +615,8 @@ sub __set {
         %args,
         table        => $self->table(),
         primary_keys => { $self->primary_keys() }
-
     );
+
     unless ($val) {
         my $message
             = $column->name . " could not be set to " . $args{'value'} . ".";
@@ -1069,7 +1073,9 @@ sub _apply_filters {
     my $action = $args{'direction'} eq 'output' ? 'decode' : 'encode';
     foreach my $filter_class (@filters) {
         local $UNIVERSAL::require::ERROR;
-        $filter_class->require();
+        $filter_class->require() unless 
+         $INC{ join('/', split(/::/,$filter_class)).".pm" };
+
         if ($UNIVERSAL::require::ERROR) {
             warn $UNIVERSAL::require::ERROR;
             next;
