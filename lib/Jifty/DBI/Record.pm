@@ -3,7 +3,6 @@ package Jifty::DBI::Record;
 use strict;
 use warnings;
 
-use vars qw($AUTOLOAD);
 use Class::ReturnValue  ();
 use Lingua::EN::Inflect ();
 use Jifty::DBI::Column  ();
@@ -88,109 +87,6 @@ sub primary_keys {
     return (%hash);
 }
 
-sub DESTROY {
-    return 1;
-}
-
-sub AUTOLOAD {
-    my $self = $_[0];
-
-    $self->_init_columns() unless $self->COLUMNS;
-
-    my ( $column_name, $action ) = $self->_parse_autoload_method($AUTOLOAD);
-
-    unless ( $action and $column_name ) {
-        my ( $package, $filename, $line ) = caller;
-        die "$AUTOLOAD Unimplemented in $package. ($filename line $line) \n";
-    }
-
-    my $column = $self->column($column_name);
-
-    unless ($column) {
-        my ( $package, $filename, $line ) = caller;
-        die "$AUTOLOAD Unimplemented in $package. ($filename line $line) \n";
-    }
-
-    no strict 'refs';    # We're going to be defining subs
-    if ( $action eq 'read' ) {
-        return '' unless $column->readable;
-
-        if ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) ) {
-            *{$AUTOLOAD} = sub {
-                $_[0]->_to_record( $column_name,
-                    $_[0]->__value($column_name) );
-            };
-        } elsif (
-            UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Collection" ) )
-        {
-            *{$AUTOLOAD} = sub { $_[0]->_collection_value($column_name) };
-        } else {
-            *{$AUTOLOAD} = sub { return ( $_[0]->_value($column_name) ) };
-        }
-        goto &$AUTOLOAD;
-    } elsif ( $action eq 'write' ) {
-        return ( 0, 'Immutable column' ) unless $column->writable;
-
-        if ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) ) {
-            *{$AUTOLOAD} = sub {
-                my $self = shift;
-                my $val  = shift;
-
-                $val = $val->id
-                    if UNIVERSAL::isa( $val, 'Jifty::DBI::Record' );
-                return (
-                    $self->_set( column => $column_name, value => $val ) );
-            };
-        } else {
-            *{$AUTOLOAD} = sub {
-                return (
-                    $_[0]->_set( column => $column_name, value => $_[1] ) );
-            };
-        }
-        goto &$AUTOLOAD;
-    } elsif ( $action eq 'validate' ) {
-        *{$AUTOLOAD}
-            = sub { return ( $_[0]->_validate( $column_name, $_[1] ) ) };
-        goto &$AUTOLOAD;
-    }
-
-    else {
-        my ( $package, $filename, $line ) = caller;
-        die "$AUTOLOAD Unimplemented in $package. ($filename line $line) \n";
-    }
-
-}
-
-=head2 _parse_autoload_method $AUTOLOAD
-
-Parses autoload methods and attempts to determine if they're 
-set, get or validate calls.
-
-Returns a tuple of (COLUMN_NAME, ACTION);
-
-=cut
-
-sub _parse_autoload_method {
-    my $self   = shift;
-    my $method = shift;
-
-    my ( $column_name, $action );
-
-    if ( $method =~ /^.*::set_(\w+)$/o ) {
-        $column_name = $1;
-        $action      = 'write';
-    } elsif ( $method =~ /^.*::validate_(\w+)$/o ) {
-        $column_name = $1;
-        $action      = 'validate';
-
-    } elsif ( $method =~ /^.*::(\w+)$/o ) {
-        $column_name = $1;
-        $action      = 'read';
-
-    }
-    return ( $column_name, $action );
-
-}
 
 =head2 _accessible COLUMN ATTRIBUTE
 
@@ -255,8 +151,87 @@ sub _init_columns {
         $column->readable(1);
         $column->type('serial');
         $column->mandatory(1);
+        $self->_init_methods_for_column($column);
     }
 }
+
+sub _init_methods_for_column {
+  my $self        = $_[0];
+  my $column      = $_[1];
+  my $column_name = ($column->aliased_as ?$column->aliased_as:$column->name);
+  my $package = ref($self)||$self;
+  no strict 'refs';    # We're going to be defining subs
+  if (  not $self->can($column_name)) {
+      
+    my $subref;
+    if ($column->readable) {
+    if ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) ) {
+      $subref = sub {
+        $_[0]->_to_record( $column_name, $_[0]->__value($column_name) );
+      };
+    }
+    elsif ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Collection" ) ) {
+      $subref = sub { $_[0]->_collection_value($column_name) };
+    }
+    else {
+      $subref = sub { return ( $_[0]->_value($column_name) ) };
+    }
+    } else {
+        $subref = sub { return '' }
+    }
+    *{$package."::".$column_name} = $subref;
+
+  }
+  if ( not $self->can("set_".$column_name)) {
+    my $subref;
+    if ($column->writable) {
+    if ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) ) {
+      $subref = sub {
+        my $self = shift;
+        my $val  = shift;
+
+        $val = $val->id
+          if UNIVERSAL::isa( $val, 'Jifty::DBI::Record' );
+        return ( $self->_set( column => $column_name, value => $val ) );
+      };
+    }
+    elsif (
+        UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Collection" ) )
+    { # XXX elw: collections land here, now what?
+      my $ret = Class::ReturnValue->new();
+      my $message = "Collection column '$column_name' not writable";
+      $ret->as_array( 0, $message );
+      $ret->as_error(
+          errno        => 3,
+          do_backtrace => 0,
+          message      => $message
+      );
+      $subref = sub { return ( $ret->return_value ); };
+    }
+    else {
+      $subref = sub {
+        return ( $_[0]->_set( column => $column_name, value => $_[1] ) );
+      };
+    } } 
+    else {
+      my $ret = Class::ReturnValue->new();
+      my $message = 'Immutable column';
+      $ret->as_array( 0, $message );
+      $ret->as_error(
+          errno        => 3,
+          do_backtrace => 0,
+          message      => $message
+      );
+      $subref = sub { return ( $ret->return_value ); };
+    }
+    *{$package."::" . "set_" . $column_name } = $subref;
+  }
+  if (not $self->can("validate_".$column_name)) { 
+  *{ $package ."::" . "validate_" . $column_name }
+    = sub { return ( $_[0]->_validate( $column_name, $_[1] ) ) };
+    }
+}
+
 
 =head2 _to_record COLUMN VALUE
 
@@ -596,19 +571,14 @@ sub __set {
         return ( $ret->return_value );
     }
 
-    # The blob handling will destroy $args{'Value'}. But we assign
+    # The blob handling will destroy $args{'value'}. But we assign
     # that back to the object at the end. this works around that
     my $unmunged_value = $args{'value'};
 
-    unless ( $self->_handle->knows_blobs ) {
-
-        # Support for databases which don't deal with LOBs automatically
-        if ( $column->type =~ /^(text|longtext|clob|blob|lob)$/i ) {
-            my $bhash
-                = $self->_handle->blob_params( $column->name, $column->type );
-            $bhash->{'value'} = $args{'value'};
-            $args{'value'} = $bhash;
-        }
+    if ( $column->type =~ /^(text|longtext|clob|blob|lob|bytea)$/i ) {
+        my $bhash = $self->_handle->blob_params( $column->name, $column->type );
+        $bhash->{'value'} = $args{'value'};
+        $args{'value'} = $bhash;
     }
 
     my $val = $self->_handle->update_record_value(
@@ -637,7 +607,7 @@ sub __set {
         # XXX TODO primary_keys
         $self->load_by_cols( id => $self->id );
     } else {
-        $self->{'values'}->{ $column->name } = $unmunged_value;
+        $self->{'values'}{ $column->name } = $unmunged_value;
         $self->{'decoded'}{ $column->name } = 0;
     }
     $ret->as_array( 1, "The new value has been set." );
@@ -872,18 +842,10 @@ sub create {
             value_ref => \$attribs{$column_name},
         );
 
-    }
-    unless ( $self->_handle->knows_blobs ) {
-
-        # Support for databases which don't deal with LOBs automatically
-        foreach my $column_name ( keys %attribs ) {
-            my $column = $self->column($column_name);
-            if ( $column->type =~ /^(text|longtext|clob|blob|lob)$/i ) {
-                my $bhash = $self->_handle->blob_params( $column_name,
-                    $column->type );
-                $bhash->{'value'} = $attribs{$column_name};
-                $attribs{$column_name} = $bhash;
-            }
+        if ( $column->type =~ /^(text|longtext|clob|blob|lob|bytea)$/i ) {
+            my $bhash = $self->_handle->blob_params( $column_name, $column->type );
+            $bhash->{'value'} = $attribs{$column_name};
+            $attribs{$column_name} = $bhash;
         }
     }
     my $ret = $self->_handle->insert( $self->table, %attribs );

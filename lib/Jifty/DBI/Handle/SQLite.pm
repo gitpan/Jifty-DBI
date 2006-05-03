@@ -20,7 +20,7 @@ compensates for some of the idiosyncrasies of SQLite.
 
 =head1 METHODS
 
-=head2
+=head2 database_version
 
 Returns the version of the SQLite library which is used, e.g., "2.8.0".
 SQLite can only return short variant.
@@ -69,10 +69,6 @@ Returns undef, since SQLite's searches are not case sensitive by default
 sub case_sensitive {
     my $self = shift;
     return (1);
-}
-
-sub binary_safe_blobs {
-    return undef;
 }
 
 =head2 distinct_count STATEMENTREF

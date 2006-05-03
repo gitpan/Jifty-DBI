@@ -1,4 +1,4 @@
-package Jifty::DBI::Filter::DateTime;
+package Jifty::DBI::Filter::Date;
 
 use warnings;
 use strict;
@@ -6,21 +6,29 @@ use strict;
 use base qw|Jifty::DBI::Filter|;
 use DateTime                  ();
 use DateTime::Format::ISO8601 ();
+use DateTime::Format::Strptime ();
+
 
 =head1 NAME
 
-Jifty::DBI::Filter::DateTime - DateTime object wrapper around date columns
+Jifty::DBI::Filter::Date - DateTime object wrapper around date columns
 
 =head1 DESCRIPTION
 
-This filter allow you to work with DateTime objects instead of plain
+This filter allow you to work with DateTime objects that represent "Dates",
+store everything in the database in GMT and not hurt yourself badly
+when you pull them out and put them in repeatedly
 text dates.
 
 =head2 encode
 
-If value is DateTime object then converts it into ISO format
-C<YYYY-MM-DD hh:mm:ss>. Does nothing if value is not defined or
-string.
+If value is a DateTime object then move it into a "floating" timezone
+and expand it into ISO 8601 format C<YYYY-MM-DD>.  By storing it in 
+the database as a floating timezone, it doesn't matter if the user's 
+desired timezone changes between lookups
+
+Does nothing if value is not defined or is a string.
+
 
 =cut
 
@@ -31,14 +39,17 @@ sub encode {
     return unless $$value_ref;
 
     return unless UNIVERSAL::isa( $$value_ref, 'DateTime' );
+    $$value_ref->time_zone('floating');
 
     my $format = ($self->column->type eq "date" ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S");
     $$value_ref = $$value_ref->strftime($format);
-
     return 1;
 }
 
 =head2 decode
+
+If we're loading something from a column that doesn't specify times, then
+it's loaded into a floating timezone.
 
 If value is defined then converts it into DateTime object otherwise do
 nothing.
@@ -60,6 +71,8 @@ sub decode {
 
     my $str = join('T', split ' ', $$value_ref, 2);
     my $dt = DateTime::Format::ISO8601->parse_datetime($str);
+    $dt->time_zone('floating');
+    $dt->set_formatter(DateTime::Format::Strptime->new(pattern => '%Y-%m-%d'));
     if ($dt) {
         $$value_ref = $dt;
     } else {
