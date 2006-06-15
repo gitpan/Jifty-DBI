@@ -53,6 +53,9 @@ All these functions are exported.
 
 Set forth the description of a column in the data store.
 
+Note: If the column uses 'refers_to' to reference another class then you 
+should not name the column ending in '_id' as it has special meaning.
+
 =cut
 
 sub column {
@@ -119,6 +122,29 @@ sub column {
     $from->COLUMNS->{$name} = $column;
     $from->_init_methods_for_column($column);
 }
+
+=head2 refers_to
+
+Indicates that the column references an object or a collection of objects in another
+class.  You may refer to either a class that inherits from Jifty::Record by a primary
+key in that class or to a class that inherits from Jifty::Collection.
+
+Correct usage is C<refers_to Application::Model::OtherClass by 'column_name'>, where
+Application::Model::OtherClass is a valid Jifty model and C<'column_name'> is
+a column containing unique values in OtherClass.  You can omit C<by 'column_name'> and
+the column name 'id' will be used.
+
+If you are referring to a Jifty::Collection then you must specify C<by 'column_name'>.
+
+When accessing the value in the column the actual object referenced will be returned for
+refernces to Jifty::Records and a reference to a Jifty::Collection will be returned for
+columns referring to Jifty::Collections.
+
+For columns referring to Jifty::Records you can access the actual value of the column
+instead of the object reference by appending '_id' to the column name.  As a result,
+you may not end any column name which uses 'refers_to' using '_id'.
+
+=cut
 
 =head2 type
 
@@ -230,8 +256,11 @@ sub not_null {
 =head2 distinct
 
 Declares that a column should only have distinct values.  This
-currently does nothing, due to not being implemented in
-L<DBIx::DBSchema>.  Correct usage is C<is distinct>.
+currently is implemented via database queries prior to updates
+and creates instead of constraints on the database columns
+themselves. This is because there is no support for distinct
+columns implemented in L<DBIx::DBSchema> at this time.  
+Correct usage is C<is distinct>.
 
 =cut
 
@@ -278,8 +307,9 @@ sub input_filters {
 =head2 output_filters
 
 Sets a list of output filters on the data.  Correct usage is
-C<input_filters are 'Jifty::DBI::Filter::DateTime'>.  See
-L<Jifty::DBI::Filter>.
+C<output_filters are 'Jifty::DBI::Filter::DateTime'>.  See
+L<Jifty::DBI::Filter>.  You usually don't need to set this, as the
+output filters default to the input filters in reverse order.
 
 =cut
 
@@ -290,8 +320,10 @@ sub output_filters {
 =head2 filters
 
 Sets a list of filters on the data.  These are applied when reading
-B<and> writing to the database.  Correct usage is C<input_filters are
-'Jifty::DBI::Filter::DateTime'>.  See L<Jifty::DBI::Filter>.
+B<and> writing to the database.  Correct usage is C<filters are
+'Jifty::DBI::Filter::DateTime'>.  See L<Jifty::DBI::Filter>.  In
+actuality, this is the exact same as L</input_filters>, since output
+filters default to the input filters, reversed.
 
 =cut
 

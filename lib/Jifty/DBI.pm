@@ -2,7 +2,7 @@ package Jifty::DBI;
 use warnings;
 use strict;
 
-our $VERSION = '0.21';
+$Jifty::DBI::VERSION = '0.23';
 
 =head1 NAME
 
@@ -127,7 +127,7 @@ when there is no password.  I could probably leave it blank, but I find
 it to be more clear to define it.
 
  
- my $s = Simple->new($handle);
+ my $s = Simple->new( handle => $handle );
  
  $s->load_by_cols(id=>1); 
 
@@ -184,18 +184,18 @@ operations, such that updates will only happen when "you" say so.
 
 Finally, adding a removing records from the database.  ::Record provides a 
 Create method which simply takes a hash of key=>value pairs.  The keys 
-exactly	map to database columns. 
+exactly map to database columns. 
 
  ## Get a new record object.
- $s1 = Simple->new($handle);
+ $s1 = Simple->new( handle => $handle );
  my ($id, $status_msg) = $s1->create(id  => 4,
- 	           foo => 'Foooooo', 
- 	           bar => 'Barrrrr');
+                   foo => 'Foooooo', 
+                   bar => 'Barrrrr');
 
 Poof! A new row in the database has been created!  Now lets delete the 
 object! 
 
- my $s2 = Simple->new($handle);
+ my $s2 = Simple->new( handle => $handle );
  $s2->load_by_cols(id=>4);
  $s2->delete();
 

@@ -3,7 +3,7 @@ use warnings;
 
 package Jifty::DBI::SchemaGenerator;
 
-use base qw(Class::Accessor);
+use base qw(Class::Accessor::Fast);
 use DBIx::DBSchema;
 use Class::ReturnValue;
 
@@ -118,7 +118,7 @@ Requires no configuration files or environment variables.
 
 =head1 DEPENDENCIES
 
-Class::Accessor
+Class::Accessor::Fast
 
 DBIx::DBSchema
 
@@ -217,7 +217,7 @@ sub create_table_sql_text {
     return join "\n", map {"$_ ;\n"} $self->create_table_sql_statements;
 }
 
-=for private_doc _db_schema_table_from_model MODEL
+=head2 PRIVATE _db_schema_table_from_model MODEL
 
 Takes an object of a subclass of Jifty::DBI::Record; returns a new
 C<DBIx::DBSchema::Table> object corresponding to the model.
@@ -259,7 +259,7 @@ sub _db_schema_table_from_model {
     return $table;
 }
 
-=for private_doc _error STRING
+=head2 PRIVATE _error STRING
 
 Takes in a string and returns it as a Class::ReturnValue error object.
 

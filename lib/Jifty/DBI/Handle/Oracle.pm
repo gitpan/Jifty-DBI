@@ -27,12 +27,12 @@ sub connect {
     my $self = shift;
 
     my %args = (
-        Driver   => undef,
-        Database => undef,
-        User     => undef,
-        Password => undef,
-        SID      => undef,
-        Host     => undef,
+        driver   => undef,
+        database => undef,
+        user     => undef,
+        password => undef,
+        sid      => undef,
+        host     => undef,
         @_
     );
 
@@ -119,31 +119,31 @@ Builds a DSN suitable for an Oracle DBI connection
 sub build_dsn {
     my $self = shift;
     my %args = (
-        Driver     => undef,
-        Database   => undef,
-        Host       => undef,
-        Port       => undef,
-        SID        => undef,
-        RequireSSL => undef,
+        driver     => undef,
+        database   => undef,
+        host       => undef,
+        port       => undef,
+        sid        => undef,
+        requiressl => undef,
         @_
     );
 
-    my $dsn = "dbi:$args{'Driver'}:";
+    my $dsn = "dbi:$args{'driver'}:";
 
-    if (   defined $args{'Host'}
-        && $args{'Host'}
-        && defined $args{'SID'}
-        && $args{'SID'} )
+    if (   defined $args{'host'}
+        && $args{'host'}
+        && defined $args{'sid'}
+        && $args{'sid'} )
     {
-        $dsn .= "host=$args{'Host'};sid=$args{'SID'}";
+        $dsn .= "host=$args{'host'};sid=$args{'sid'}";
     } else {
-        $dsn .= "$args{'Database'}"
-            if ( defined $args{'Database'} && $args{'Database'} );
+        $dsn .= "$args{'database'}"
+            if ( defined $args{'database'} && $args{'database'} );
     }
-    $dsn .= ";port=$args{'Port'}"
-        if ( defined $args{'Port'} && $args{'Port'} );
+    $dsn .= ";port=$args{'port'}"
+        if ( defined $args{'port'} && $args{'port'} );
     $dsn .= ";requiressl=1"
-        if ( defined $args{'RequireSSL'} && $args{'RequireSSL'} );
+        if ( defined $args{'requiressl'} && $args{'requiressl'} );
 
     $self->{'dsn'} = $dsn;
 }
@@ -241,7 +241,7 @@ sub distinct_query {
             = [ @{ $sb->{group_by} || [] }, { column => 'id' } ];
         local $sb->{order_by} = [
             map {
-                ( $_->{alias} and $_->{alias} ne "main" )
+                      ( $_->{alias} and $_->{alias} ne "main" )
                     ? { %{$_}, column => "min(" . $_->{column} . ")" }
                     : $_
                 } @{ $sb->{order_by} }

@@ -53,7 +53,7 @@ use vars qw($VERSION);
 use Data::Page;
 use Clone;
 use Carp qw/croak/;
-use base qw/Class::Accessor/;
+use base qw/Class::Accessor::Fast/;
 __PACKAGE__->mk_accessors(qw/pager/);
 
 =head1 METHODS
@@ -199,9 +199,9 @@ sub _do_search {
         $item->load_from_hash($row);
         $self->add_record($item);
     }
-    return $self->_record_count if $records->err;
-
-    $self->{'must_redo_search'} = 0;
+    if ( $records->err ) {
+        $self->{'must_redo_search'} = 0;
+    }
 
     return $self->_record_count;
 }
@@ -210,11 +210,17 @@ sub _do_search {
 
 Adds a record object to this collection.
 
+This method automatically sets our "must redo search" flag to 0 and our "we have limits" flag to 1.
+
+Without those two flags, counting the number of items wouldn't work.
+
 =cut
 
 sub add_record {
     my $self   = shift;
     my $record = shift;
+    $self->_is_limited(1);
+    $self->{'must_redo_search'} = 0;
     push @{ $self->{'items'} }, $record;
 }
 
@@ -373,7 +379,7 @@ sub build_select_query {
     if ( $self->_is_limited ) {
         $query_string .= $self->_where_clause . " ";
     }
-    if ( $self->_is_joined ) {
+    if ( $self->distinct_required ) {
 
         # DISTINCT query only required for multi-table selects
         $self->_distinct_query( \$query_string );
@@ -386,6 +392,26 @@ sub build_select_query {
     $self->_apply_limits( \$query_string );
 
     return ($query_string)
+
+}
+
+
+=head2 distinct_required
+
+Returns true if Jifty::DBI expects that this result set will end up
+with repeated rows and should be "condensed" down to a single row for
+each unique primary key.  Out of the box, this method returns true if
+you've joined to another table.  If you're smarter than Jifty::DBI,
+feel free to override this method in your subclass.
+
+XXX TODO: it should be possible to create a better heuristic than the simple "is it joined?" question we're asking now. Something along the lines of "are we joining this table to something that is not the other table's primary key"
+
+=cut
+
+
+sub distinct_required {
+    my $self = shift;
+    return $self->_is_joined ? 1 : 0;
 
 }
 
@@ -418,7 +444,7 @@ sub build_select_count_query {
 =head2 do_search
 
 C<Jifty::DBI::Collection> usually does searches "lazily". That is, it
-does a C<SELECT COUNT> or a C<SELELCT> on the fly the first time you ask
+does a C<SELECT COUNT> or a C<SELECT> on the fly the first time you ask
 for results that would need one or the other.  Sometimes, you need to
 display a count of results found before you iterate over a collection,
 but you know you're about to do that too. To save a bit of wear and tear
@@ -540,7 +566,7 @@ sub new_item {
         unless $class;
 
     $class->require();
-    return $class->new( $self->_handle );
+    return $class->new( handle => $self->_handle );
 }
 
 =head2 record_class
@@ -589,7 +615,7 @@ sub redo_search {
 
 =head2 unlimit
 
-unlimit clears all restrictions and causes this object to return all
+Clears all restrictions and causes this object to return all
 rows in the primary table.
 
 =cut
@@ -603,7 +629,7 @@ sub unlimit {
 
 =head2 limit
 
-limit takes a hash of parameters with the following keys:
+Takes a hash of parameters with the following keys:
 
 =over 4
 

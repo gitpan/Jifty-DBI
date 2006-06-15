@@ -13,6 +13,15 @@ $TRANSDEPTH = 0;
 
 our $VERSION = '0.01';
 
+if (my $pattern = $ENV{JIFTY_DBQUERY_CALLER}) {
+    require Hook::LexWrap;
+    Hook::LexWrap::wrap('Jifty::DBI::Handle::simple_query', pre => sub {
+        return unless $_[1] =~ m/$pattern/;
+        warn $_[1]."\n";
+        Carp::cluck;
+    });
+}
+
 =head1 NAME
 
 Jifty::DBI::Handle - Perl extension which is a generic DBI handle
@@ -31,7 +40,8 @@ Jifty::DBI::Handle - Perl extension which is a generic DBI handle
 
 =head1 DESCRIPTION
 
-This class provides a wrapper for DBI handles that can also perform a number of additional functions.
+This class provides a wrapper for DBI handles that can also perform a
+number of additional functions.
 
 =cut
 
@@ -469,7 +479,9 @@ sub simple_query {
                 . $self->dbh->errstr . "\n";
 
         } else {
-            Carp::cluck "$self couldn't execute the query '$query_string'";
+            # XXX: This warn doesn't show up because we mask logging in Jifty::Test::END.
+            # and it usually fails because the test server is still running.
+            warn "$self couldn't execute the query '$query_string'";
 
             my $ret = Class::ReturnValue->new();
             $ret->as_error(
@@ -995,6 +1007,12 @@ sub DESTROY {
 1;
 __END__
 
+
+=head1 DIAGNOSIS
+
+Setting C<JIFTY_DBQUERY_CALLER> environment variable will make
+L<Jifty::DBI> dump the caller for the SQL queries matching it.  See
+also C<DBI> about setting C<DBI_PROFILE>.
 
 =head1 AUTHOR
 
