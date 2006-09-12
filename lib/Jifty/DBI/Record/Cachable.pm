@@ -33,18 +33,6 @@ or load methods without retrieving them from the database.
 
 my %_CACHES = ();
 
-# Function: new
-# Type    : class ctor
-# Args    : see Jifty::DBI::Record::new
-# Lvalue  : Jifty::DBI::Record::Cachable
-
-sub new () {
-    my ( $class, @args ) = @_;
-    my $self = $class->SUPER::new(@args);
-
-    return ($self);
-}
-
 sub _setup_cache {
     my $self  = shift;
     my $cache = shift;
@@ -65,7 +53,7 @@ sub flush_cache {
 
 sub _key_cache {
     my $self  = shift;
-    my $cache = $self->_handle->DSN
+    my $cache = $self->_handle->dsn
         . "-KEYS--"
         . ( $self->{'_class'} ||= ref($self) );
     $self->_setup_cache($cache) unless exists( $_CACHES{$cache} );
@@ -81,7 +69,7 @@ Blow away this record type's key cache
 
 sub _flush_key_cache {
     my $self  = shift;
-    my $cache = $self->_handle->DSN
+    my $cache = $self->_handle->dsn
         . "-KEYS--"
         . ( $self->{'_class'} ||= ref($self) );
     $self->_setup_cache($cache);
@@ -90,7 +78,7 @@ sub _flush_key_cache {
 sub _record_cache {
     my $self = shift;
     my $cache
-        = $self->_handle->DSN . "--" . ( $self->{'_class'} ||= ref($self) );
+        = $self->_handle->dsn . "--" . ( $self->{'_class'} ||= ref($self) );
     $self->_setup_cache($cache) unless exists( $_CACHES{$cache} );
     return ( $_CACHES{$cache} );
 
@@ -102,8 +90,6 @@ sub load_from_hash {
     # Blow away the primary cache key since we're loading.
     $self->{'_jifty_cache_pkey'} = undef;
     my ( $rvalue, $msg ) = $self->SUPER::load_from_hash(@_);
-
-    my $cache_key = $self->_primary_record_cache_key();
 
     ## Check the return value, if its good, cache it!
     if ($rvalue) {
@@ -137,29 +123,29 @@ sub load_by_cols {
 
 }
 
-# Function: __Set
+# Function: __set
 # Type    : (overloaded) public instance
 # Args    : see Jifty::DBI::Record::_Set
 # Lvalue  : ?
 
 sub __set () {
-    my ( $self, %attr ) = @_;
+    my $self = shift;
 
     $self->_expire();
-    return $self->SUPER::__set(%attr);
+    return $self->SUPER::__set(@_);
 
 }
 
-# Function: Delete
+# Function: delete
 # Type    : (overloaded) public instance
 # Args    : nil
 # Lvalue  : ?
 
 sub __delete () {
-    my ($self) = @_;
+    my $self = shift;
 
     $self->_expire();
-    return $self->SUPER::__delete();
+    return $self->SUPER::__delete(@_);
 
 }
 
@@ -191,8 +177,9 @@ sub _fetch () {
         
         my $data = $self->_record_cache->fetch($cache_key);
 
-  unless ($data) {      $data
-      = $self->_record_cache->fetch( $self->_key_cache->fetch($cache_key) );
+  unless ($data) {
+    $cache_key = $self->_key_cache->fetch( $cache_key );
+    $data = $self->_record_cache->fetch( $cache_key ) if $cache_key;
   }
 
   return undef unless ($data);
@@ -241,13 +228,15 @@ sub _gen_record_cache_key {
   my @cols;
 
   while ( my ( $key, $value ) = each %attr ) {
-    $key   ||= '__undef';
-    $value ||= '__undef';
-    if ( ref($value) eq "HASH" ) {
-      push @cols, $key . ( $value->{operator} || '=' ) . $value->{value};
+    unless ( defined $value ) {
+      push @cols, lc($key) . '=__undef';
+    }
+    elsif ( ref($value) eq "HASH" ) {
+      push @cols, lc($key) . ( $value->{operator} || '=' )
+          . defined $value->{value}? $value->{value}: '__undef';
     }
     else {
-      push @cols, $key . "=" . $value;
+      push @cols, lc($key) . "=" . $value;
     }
   }
   return ( $self->table() . ':' . join( ',', @cols ) );
@@ -274,20 +263,17 @@ sub _fetch_record_cache_key {
 sub _primary_record_cache_key {
     my ($self) = @_;
 
-    return unless ( defined $self->id );
-
     unless ( $self->{'_jifty_cache_pkey'} ) {
 
-        my $primary_record_cache_key = $self->table() . ':';
         my @attributes;
-        foreach my $key ( @{ $self->_primary_keys } ) {
-            push @attributes, $key . '=' . $self->SUPER::__value($key);
+        my %pk = $self->primary_keys;
+        while ( my ($key, $value) = each %pk ) {
+            return unless defined $value;
+            push @attributes, lc( $key ) . '=' . $value;
         }
 
-        $primary_record_cache_key .= join( ',', @attributes );
-
-        $self->{'_jifty_cache_pkey'}
-            = $primary_record_cache_key;
+        $self->{'_jifty_cache_pkey'} = $self->table .':'
+            . join ',', @attributes;
     }
     return ( $self->{'_jifty_cache_pkey'} );
 

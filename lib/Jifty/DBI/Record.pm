@@ -76,6 +76,23 @@ sub _init {
     if ( $args{'handle'} ) {
         $self->_handle( $args{'handle'} );
     }
+
+}
+
+sub import {
+    my $class = shift;
+    my ($flag) = @_;
+    if ($class->isa(__PACKAGE__) and defined $flag and $flag eq '-base') {
+        my $descendant = (caller)[0];
+        no strict 'refs';
+        push @{$descendant . '::ISA'}, $class;
+        shift;
+
+        # run the schema callback
+        my $callback = shift;
+        $callback->() if $callback;
+    }
+    $class->SUPER::import(@_);
 }
 
 =head2 id
@@ -258,12 +275,8 @@ sub _init_methods_for_column {
         *{ $package . "::" . "set_" . $column_name } = $subref;
     }
 
-    if ( not $column->validator and not $self->can( "validate_" . $column_name ) ) {
-        # Validator
-        *{ $package . "::" . "validate_" . $column_name }
-            = sub { return ( $_[0]->_validate( $column_name, $_[1] ) ) };
-    }
-    $column->validator( $self->can( "validate_" . $column_name ) ) unless $column->validator;
+    $column->validator( $self->can( "validate_" . $column_name ) )
+      if not $column->validator and $self->can("validate_" . $column_name );
 }
 
 
@@ -438,6 +451,15 @@ not just a value.
 
 If before_set_I<column_name> returns false, the new value isn't set.
 
+=item after_set_I<column_name> PARAMHASH
+
+This hook will be called after a value is successfully set in the
+database. It will be called with a reference to a paramhash that
+contains C<column> and C<value> keys. If C<value> was a SQL function,
+it will now contain the actual value that was set.
+
+This hook's return value is ignored.
+
 =item validate_I<column_name> VALUE
 
 This hook is called just before updating the database. It expects the
@@ -466,8 +488,8 @@ sub _value {
     my $column = shift;
 
     my $value = $self->__value( $column => @_ );
-    my $method = "after_$column";
-    $self->$method( \$value ) if ( $self->can($method) );
+    my $method = $self->can("after_$column");
+    $method->( $self, \$value ) if $method;
     return $value;
 }
 
@@ -480,7 +502,16 @@ never override __value.
 
 sub __value {
     my $self        = shift;
+
     my $column_name = lc(shift);
+    # If the requested column is actually an alias for another, resolve it.
+    my $column = $self->column($column_name);
+    if  ($column   and defined $column->alias_for_column ) {
+        $column = $self->column($column->alias_for_column());
+        $column_name = $column->name;
+    }
+
+    return unless ($column);
 
     # In the default case of "yeah, we have a value", return it as
     # fast as we can.
@@ -488,18 +519,10 @@ sub __value {
         if ( $self->{'fetched'}{$column_name}
           && $self->{'decoded'}{$column_name} );
 
-    # If the requested column is actually an alias for another, resolve it.
-    my $column = $self->column($column_name);
-    if  ($column   and defined $column->alias_for_column ) {
-        $column = $self->column($column->alias_for_column());
-    }
-
-    return unless ($column);
-
-    if ( !$self->{'fetched'}{ $column->name } and my $id = $self->id() ) {
+    if ( !$self->{'fetched'}{ $column_name } and my $id = $self->id() ) {
         my $pkey         = $self->_primary_key();
         my $query_string = "SELECT "
-            . $column->name
+            . $column_name
             . " FROM "
             . $self->table
             . " WHERE $pkey = ?";
@@ -507,18 +530,18 @@ sub __value {
         my ($value) = eval { $sth->fetchrow_array() };
         warn $@ if $@;
 
-        $self->{'values'}{ $column->name }  = $value;
-        $self->{'fetched'}{ $column->name } = 1;
+        $self->{'values'}{ $column_name }  = $value;
+        $self->{'fetched'}{ $column_name } = 1;
     }
-    unless ( $self->{'decoded'}{ $column->name } ) {
+    unless ( $self->{'decoded'}{ $column_name } ) {
         $self->_apply_output_filters(
             column    => $column,
-            value_ref => \$self->{'values'}{ $column->name },
-        );
-        $self->{'decoded'}{ $column->name } = 1;
+            value_ref => \$self->{'values'}{ $column_name },
+        ) if exists $self->{'values'}{ $column_name };
+        $self->{'decoded'}{ $column_name } = 1;
     }
 
-    return $self->{'values'}{ $column->name };
+    return $self->{'values'}{ $column_name };
 }
 
 =head2 _set
@@ -544,8 +567,19 @@ sub _set {
         return $before_set_ret
             unless ($before_set_ret);
     }
-    return $self->__set(%args);
 
+    my $ok = $self->__set(%args);
+
+    return $ok unless $ok;
+
+    $method = "after_set_" . $args{column};
+    if( $self->can($method) ) {
+        # Fetch the value back to make sure we have the actual value
+        my $value = $self->_value($args{column});
+        $self->$method({column => $args{column}, value => $value});
+    }
+
+    return $ok;
 }
 
 sub __set {
@@ -602,17 +636,19 @@ sub __set {
         }
     }
 
-    my $method = "validate_" . $column->name;
-    my ( $ok, $msg ) = $self->$method( $args{'value'} );
-    unless ($ok) {
-        $ret->as_array( 0, 'Illegal value for ' . $column->name );
-        $ret->as_error(
-            errno        => 3,
-            do_backtrace => 0,
-            message      => "Illegal value for " . $column->name
-        );
-        return ( $ret->return_value );
+    if ( my $sub = $column->validator ) {
+        my ( $ok, $msg ) = $sub->( $self, $args{'value'} );
+        unless ($ok) {
+            $ret->as_array( 0, 'Illegal value for ' . $column->name );
+            $ret->as_error(
+                errno        => 3,
+                do_backtrace => 0,
+                message      => "Illegal value for " . $column->name
+            );
+            return ( $ret->return_value );
+        }
     }
+    
 
     # Implement 'is distinct' checking
     if ( $column->distinct ) {
@@ -663,36 +699,10 @@ sub __set {
     return ( $ret->return_value );
 }
 
-=head2 _validate column VALUE
-
-Validate that value will be an acceptable value for column. 
-
-Currently, this routine does nothing whatsoever. 
-
-If it succeeds (which is always the case right now), returns true. Otherwise returns false.
-
-=cut
-
-sub _validate {
-    my $self   = shift;
-    my $column = shift;
-    my $value  = shift;
-
- #Check type of input
- #If it's null, are nulls permitted?
- #If it's an int, check the # of bits
- #If it's a string,
- #check length
- #check for nonprintables
- #If it's a blob, check for length
- #In an ideal world, if this is a link to another table, check the dependency.
-    return (1);
-}
-
 =head2 load
 
-Takes a single argument, $id. Calls load_by_cols to retrieve the row whose primary key
-is $id
+Takes a single argument, $id. Calls load_by_cols to retrieve the row 
+whose primary key is $id.
 
 =cut
 
@@ -734,6 +744,12 @@ sub load_by_cols {
                 $value = $hash{$key};
             }
 
+            if (ref $value && $value->isa('Jifty::DBI::Record') ) {
+                # XXX TODO: check for proper foriegn keyness here
+                $value = $value->id;
+            }
+
+
             push @phrases, "$key $op $function";
             push @bind,    $value;
         } else {
@@ -758,6 +774,7 @@ sub load_by_cols {
 
 =head2 load_by_primary_keys 
 
+Loads records with a given set of primary keys. 
 
 =cut
 
@@ -839,8 +856,6 @@ sub _load_from_sql {
 
 This method creates a new record with the values specified in the PARAMHASH.
 
-Keys that aren't known as columns for this record type are dropped.
-
 This method calls two hooks in your subclass:
 
 =over
@@ -910,7 +925,7 @@ sub create {
         }
         if (not defined $attribs{$column->name} and $column->mandatory and $column->type ne "serial" ) {
             # Enforce "mandatory"
-            warn "Did not supply value for mandatory column ".$column->name;
+            Carp::carp "Did not supply value for mandatory column ".$column->name;
             return ( 0 );
         }
     }

@@ -9,15 +9,18 @@ Jifty::DBI::Schema - Use a simple syntax to describe a Jifty table.
 
 =head1 SYNOPSIS
 
-package Wifty::Model::Page::Schema;
-use Jifty::DBI::Schema;
+    package Wifty::Model::Page;
+    use Jifty::DBI::Schema;
+    use Jifty::DBI::Record schema {
+    # ... your columns here ...
+    };
 
 =cut
 
 =head1 DESCRIPTION
 
 Each Jifty Application::Model::Class module describes a record class
-for for a Jifty application.  Each column statement sets out the name
+for a Jifty application.  Each C<column> statement sets out the name
 and attributes used to describe the column in a backend database, in
 user interfaces, and other contexts.  For example:
 
@@ -26,8 +29,8 @@ user interfaces, and other contexts.  For example:
        label is 'Content',
        render_as 'textarea';
 
-defines a column called "content" that is of type "text".  It will be
-rendered with the label "Content" (note the capital) and as a "textarea" in
+defines a column called C<content> that is of type C<text>.  It will be
+rendered with the label C<Content> (note the capital) and as a C<textarea> in
 a HTML form.
 
 Jifty::DBI::Schema builds a L<Jifty::DBI::Column>.  That class defines
@@ -40,14 +43,52 @@ associations between classes.
 use Carp qw/croak carp/;
 use Exporter::Lite;
 our @EXPORT
-    = qw(column type default literal validator immutable unreadable length distinct mandatory not_null sort_order valid_values label hints render_as since input_filters output_filters filters virtual is by are on);
+    = qw(column type default literal validator immutable unreadable length distinct mandatory not_null sort_order valid_values label hints render_as since input_filters output_filters filters virtual is by are on schema);
 
 our $SCHEMA;
 our $SORT_ORDERS = {};
 
 =head1 FUNCTIONS
 
-All these functions are exported.
+All these functions are exported.  However, if you use the C<schema> helper function,
+they will be unimported at the end of the block passed to C<schema>.
+
+=head2 schema
+
+Takes a block with schema declarations.  Unimports all helper functions after
+executing the code block.  Usually used at C<BEGIN> time via this idiom:
+
+    use Jifty::DBI::Record schema { ... };
+
+If your application subclasses C<::Record>, then write this instead:
+
+    use MyApp::Record schema { ... };
+
+=cut
+
+sub schema (&) {
+    my $code = shift;
+
+    my $from = (caller)[0];
+
+    my $new_code = sub {
+        $code->();
+
+        # Unimport all our symbols from the calling package.
+        foreach my $sym (@EXPORT) {
+            no strict 'refs';
+            undef *{"$from\::$sym"}
+                if \&{"$from\::$sym"} == \&$sym;
+        }
+
+        # Then initialize all columns
+        foreach my $column (sort keys %{$from->COLUMNS||{}}) {
+            $from->_init_methods_for_column($from->COLUMNS->{$column});
+        }
+    };
+
+    return('-base' => $new_code);
+}
 
 =head2 column
 
@@ -120,7 +161,14 @@ sub column {
 
 
     $from->COLUMNS->{$name} = $column;
-    $from->_init_methods_for_column($column);
+
+    # Heuristics: If we are called through Jifty::DBI::Schema, 
+    # then we know that we are going to initialize methods later
+    # through the &schema wrapper, so we defer initialization here
+    # to not upset column names such as "label" and "type".
+    return if caller(1) eq __PACKAGE__;
+
+    $from->_init_methods_for_column($column)
 }
 
 =head2 refers_to
@@ -370,7 +418,7 @@ sub label {
 
 A sentence or two to display in long-form user interfaces about what
 might go in this column.  Correct usage is C<hints is 'Used by the
-frobnicator to to strange things'>.
+frobnicator to do strange things'>.
 
 =cut
 
@@ -472,18 +520,17 @@ sub on {
 
 sub _list {
     defined wantarray
-        or die
-        "Cannot add traits in void context -- check for misspelled preceding comma as a semicolon";
+        or croak("Cannot add traits in void context -- check for misspelled preceding comma as a semicolon");
+
     wantarray
-        or die
-        "Cannot call list traits in scalar context -- check for unneccessary 'is'";
+        or croak("Cannot call list traits in scalar context -- check for unneccessary 'is'");
     _trait(@_);
 }
 
 sub _item {
     defined wantarray
-        or die
-        "Cannot add traits in void context -- check for misspelled preceding comma as a semicolon";
+        or croak("Cannot add traits in void context -- check for misspelled preceding comma as a semicolon");
+
     _trait(@_);
 }
 
@@ -523,7 +570,7 @@ sub apply {
 
     my ($method, $argument) = @{$self};
 
-    die "Illegal Jifty::DBI::Schema property '$method'"
+    croak("Illegal Jifty::DBI::Schema property '$method'")
       unless $column->can($method);
 
     $column->$method($argument);

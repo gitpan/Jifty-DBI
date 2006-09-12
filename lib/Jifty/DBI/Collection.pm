@@ -54,7 +54,7 @@ use Data::Page;
 use Clone;
 use Carp qw/croak/;
 use base qw/Class::Accessor::Fast/;
-__PACKAGE__->mk_accessors(qw/pager/);
+__PACKAGE__->mk_accessors(qw/pager preload_columns/);
 
 =head1 METHODS
 
@@ -101,6 +101,7 @@ sub _init {
         @_
     );
     $self->_handle( $args{'handle'} ) if ( $args{'handle'} );
+    $self->table($self->new_item->table());
     $self->clean_slate();
 }
 
@@ -145,7 +146,6 @@ sub clean_slate {
         subclauses
         restrictions
         _open_parens
-        _close_parens
     );
 
     $self->implicit_clauses();
@@ -384,7 +384,7 @@ sub build_select_query {
         # DISTINCT query only required for multi-table selects
         $self->_distinct_query( \$query_string );
     } else {
-        $query_string = "SELECT main.* FROM $query_string";
+        $query_string = "SELECT ".$self->_preload_columns." FROM $query_string";
         $query_string .= $self->_group_clause;
         $query_string .= $self->_order_clause;
     }
@@ -395,6 +395,19 @@ sub build_select_query {
 
 }
 
+=head2 preload_columns
+
+The columns that the query would load for result items.  By default it's everything.
+
+XXX TODO: in the case of distinct, it needs to work as well.
+
+=cut
+
+sub _preload_columns {
+    my $self = shift;
+    return 'main.*' unless $self->preload_columns;
+    return join(',', map { "main.$_" } @{$self->preload_columns});
+}
 
 =head2 distinct_required
 
@@ -539,7 +552,7 @@ sub last {
 
 =head2 items_array_ref
 
-Return a refernece to an array containing all objects found by this
+Return a reference to an array containing all objects found by this
 search.
 
 =cut
@@ -650,7 +663,9 @@ Column to be checked against.
 
 =item value
 
-Should always be set and will always be quoted. 
+Should always be set and will always be quoted.  If the value is a
+subclass of Jifty::DBI::Object, the value will be interpreted to be
+the object's id.
 
 =item operator
 
@@ -661,6 +676,9 @@ operator is the SQL operator to use for this phrase.  Possible choices include:
 =item "="
 
 =item "!="
+
+Any other standard SQL comparision operators that your underlying
+database supports are also valid.
 
 =item "LIKE"
 
@@ -685,7 +703,8 @@ Can be AND or OR (or anything else valid to aggregate two clauses in SQL)
 =item case_sensitive
 
 on some databases, such as postgres, setting case_sensitive to 1 will make
-this search case sensitive
+this search case sensitive.  Note that this flag is ignored if the column
+is numeric.
 
 =back
 
@@ -714,6 +733,11 @@ sub limit {
         unless defined $args{column};
     croak "Must provide a value to limit to"
         unless defined $args{value};
+
+    # make passing in an object DTRT
+    if (ref($args{value}) && $args{value}->isa('Jifty::DBI::Record')) {
+        $args{value} = $args{value}->id;
+    }
 
     #since we're changing the search criteria, we need to redo the search
     $self->redo_search();
@@ -814,19 +838,18 @@ sub limit {
 
     # If it's a new value or we're overwriting this sort of restriction,
 
-    if (   $self->_handle->case_sensitive
+    if ($self->_handle->case_sensitive
         && defined $args{'value'}
-        && $args{'value'} ne ''
-        && $args{'value'} ne "''"
-        && ( $args{'operator'} !~ /IS/ && $args{'value'} !~ /^null$/i ) )
-    {
-
-        unless ( $args{'case_sensitive'} || !$args{'quote_value'} ) {
-            ( $qualified_column, $args{'operator'}, $args{'value'} )
-                = $self->_handle->_make_clause_case_insensitive(
-                $qualified_column, $args{'operator'}, $args{'value'} );
-        }
-
+        && $args{'quote_value'}
+        && ! $args{'case_sensitive'}) {
+      # don't worry about case for numeric columns_in_db
+      my $column_obj = $self->new_item()->column($args{column});
+      if (defined $column_obj ? ! $column_obj->is_numeric : 1) {
+        ( $qualified_column, $args{'operator'}, $args{'value'} ) =
+          $self->_handle->_make_clause_case_insensitive( $qualified_column,
+                                                         $args{'operator'},
+                                                         $args{'value'} );
+      }
     }
 
     my $clause = "($qualified_column $args{'operator'} $args{'value'})";
@@ -862,13 +885,33 @@ sub limit {
     }
 }
 
-sub _open_paren {
+=head2 open_paren CLAUSE
+
+Places an open paren at the current location in the given C<CLAUSE>.
+Note that this can be used for Deep Magic, and has a high likelyhood
+of allowing you to construct malformed SQL queries.  Its interface
+will probably change in the near future, but its presence allows for
+arbitrarily complex queries.
+
+=cut
+
+sub open_paren {
     my ( $self, $clause ) = @_;
     $self->{_open_parens}{$clause}++;
 }
 
+=head2 close_paren CLAUSE
+
+Places a close paren at the current location in the given C<CLAUSE>.
+Note that this can be used for Deep Magic, and has a high likelyhood
+of allowing you to construct malformed SQL queries.  Its interface
+will probably change in the near future, but its presence allows for
+arbitrarily complex queries.
+
+=cut
+
 # Immediate Action
-sub _close_paren {
+sub close_paren {
     my ( $self, $clause ) = @_;
     my $restriction = \$self->{'restrictions'}{"$clause"};
     if ( !$$restriction ) {
@@ -1173,13 +1216,13 @@ $self->new_alias or a $self->limit. C<column1> and C<column2> are the columns
 in C<alias1> and C<alias2> that should be linked, respectively.  For this
 type of join, this method has no return value.
 
-Supplying the parameter C<type> => 'left' causes Join to preform a left
+Supplying the parameter C<type> => 'left' causes Join to perform a left
 join.  in this case, it takes C<alias1>, C<column1>, C<table2> and
 C<column2>. Because of the way that left joins work, this method needs a
 table for the second column rather than merely an alias.  For this type
 of join, it will return the alias generated by the join.
 
-The parameter C<operator> defaults C<=>, but you can specity other
+The parameter C<operator> defaults C<=>, but you can specify other
 operators to join with.
 
 Instead of C<alias1>/C<column1>, it's possible to specify expression, to join

@@ -2,7 +2,7 @@ package Jifty::DBI;
 use warnings;
 use strict;
 
-$Jifty::DBI::VERSION = '0.23';
+$Jifty::DBI::VERSION = '0.25';
 
 =head1 NAME
 
@@ -13,7 +13,7 @@ Jifty::DBI - An object-relational persistence framework
 Jifty::DBI deals with databases, so that you don't have to.
 
 This module provides an object-oriented mechanism for retrieving and
-updating data in a DBI-accesible database. 
+updating data in a DBI-accessible database. 
 
 This module is the direct descendent of L<DBIx::SearchBuilder>. If you're familiar
 with SearchBuilder, Jifty::DBI should be quite familiar to you.
@@ -21,9 +21,9 @@ with SearchBuilder, Jifty::DBI should be quite familiar to you.
 =head2 What is it trying to do. 
 
 Jifty::DBI::Record abstracts the agony of writing the common and generally 
-simple SQL statements needed to serialize and De-serialize an object to the
+simple SQL statements needed to serialize and de-serialize an object to the
 database.  In a traditional system, you would define various methods on 
-your object 'create', 'readu', 'update', and 'delete' being the most common. 
+your object 'create', 'read', 'update', and 'delete' being the most common. 
 In each method you would have a SQL statement like: 
 
   select * from table where value='blah';
@@ -38,10 +38,10 @@ basically the same.
 
 Enter, Jifty::DBI::Record. 
 
-With::Record, you can in the simple case, remove all of that code and 
-replace it by defining two methods and inheriting some code.  Its pretty 
-simple, and incredibly powerful.  For more complex cases, you can, gasp, 
-do more complicated things by overriding certain methods.  Lets stick with
+With ::Record, you can in the simple case, remove all of that code and 
+replace it by defining two methods and inheriting some code.  It's pretty 
+simple and incredibly powerful.  For more complex cases, you can 
+do more complicated things by overriding certain methods.  Let's stick with
 the simple case for now. 
 
 
@@ -136,7 +136,7 @@ it to be more clear to define it.
 
 =item load_by_cols
 
-Takes a hash of column =>value pairs and returns the *first* to match. 
+Takes a hash of column => value pairs and returns the *first* to match. 
 First is probably lossy across databases vendors. 
 
 =item load_from_hash
@@ -182,8 +182,8 @@ Currently Set<Field> updates the data in the database as soon as you call
 it.  In the future I hope to extend ::Record to better support transactional
 operations, such that updates will only happen when "you" say so.
 
-Finally, adding a removing records from the database.  ::Record provides a 
-Create method which simply takes a hash of key=>value pairs.  The keys 
+Finally, adding and removing records from the database.  ::Record provides a 
+Create method which simply takes a hash of key => value pairs.  The keys 
 exactly map to database columns. 
 
  ## Get a new record object.

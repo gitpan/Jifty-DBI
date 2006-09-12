@@ -1,10 +1,10 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl 
 
 use strict;
 use warnings;
 use Test::More;
 
-use constant TESTS_PER_DRIVER => 14;
+use constant TESTS_PER_DRIVER => 15;
 our @available_drivers;
 
 BEGIN {
@@ -81,6 +81,7 @@ END_SCHEMA
     my $employee = Sample::Employee->new;
     
     isa_ok($employee, 'Sample::Employee');
+    can_ok($employee, qw( label type dexterity ));
     
     $ret = $SG->add_model($employee);
 
@@ -99,6 +100,8 @@ END_SCHEMA
       id serial NOT NULL ,
       dexterity integer ,
       name varchar ,
+      label varchar ,
+      type varchar ,
       PRIMARY KEY (id)
     ) ;
 END_SCHEMA
