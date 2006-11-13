@@ -27,7 +27,7 @@ user interfaces, and other contexts.  For example:
     column content =>
        type is 'text',
        label is 'Content',
-       render_as 'textarea';
+       render as 'textarea';
 
 defines a column called C<content> that is of type C<text>.  It will be
 rendered with the label C<Content> (note the capital) and as a C<textarea> in
@@ -43,7 +43,7 @@ associations between classes.
 use Carp qw/croak carp/;
 use Exporter::Lite;
 our @EXPORT
-    = qw(column type default literal validator immutable unreadable length distinct mandatory not_null sort_order valid_values label hints render_as since input_filters output_filters filters virtual is by are on schema);
+    = qw(column type default literal validator immutable unreadable length distinct mandatory not_null sort_order valid_values label hints render_as render since input_filters output_filters filters virtual is as by are on schema);
 
 our $SCHEMA;
 our $SORT_ORDERS = {};
@@ -166,7 +166,9 @@ sub column {
     # then we know that we are going to initialize methods later
     # through the &schema wrapper, so we defer initialization here
     # to not upset column names such as "label" and "type".
-    return if caller(1) eq __PACKAGE__;
+    # (We may not *have* a caller(1) if the user is executing a .pm file.)
+    my $caller1 = caller(1);
+    return if defined $caller1 && $caller1 eq __PACKAGE__;
 
     $from->_init_methods_for_column($column)
 }
@@ -198,6 +200,14 @@ you may not end any column name which uses 'refers_to' using '_id'.
 
 type passed to our database abstraction layer, which should resolve it
 to a database-specific type.  Correct usage is C<type is 'text'>.
+
+Currently type is passed directly to the database.  There is no
+intermediary mapping from abstract type names to database specific
+types.
+
+The impact of this is that not all column types are portable between
+databases.  For example blobs have different names between
+mysql and postgres.
 
 =cut
 
@@ -336,7 +346,7 @@ columns in the order they are defined.
 =cut
 
 sub sort_order {
-    _item ( sort_order => 0, @_);
+    _item ( sort_order => (shift @_ || 0));
 }
 
 
@@ -397,9 +407,27 @@ autoconstruct a validator for you.  This list may also be used to
 generate the user interface.  Correct usage is C<valid_values are
 qw/foo bar baz/>.
 
+If you want to display different values than are stored in the DB 
+you can pass a list of hashrefs, each containing two keys, display 
+and value.
+
+ valid_values are
+  { display => 'Blue', value => 'blue' },
+  { display => 'Red', value => 'red' }
+
 =cut
 
 sub valid_values {
+    _list( valid_values => @_ );
+}
+
+=head2 valid
+
+Alias for C<valid_values>.
+
+=cut
+
+sub valid {
     _list( valid_values => @_ );
 }
 
@@ -475,6 +503,16 @@ sub render_as {
     _list( render_as => @_ );
 }
 
+=head2 render
+
+Alias for C<render_as>.
+
+=cut
+
+sub render {
+    _list( render_as => @_ );
+}
+
 =head2 by
 
 Helper method to improve readability.
@@ -492,6 +530,17 @@ Helper method to improve readability.
 =cut
 
 sub is {
+    my $thing = shift;
+    ref $thing eq "ARRAY" ? ( @{$thing}, @_ ) : ($thing, @_);
+}
+
+=head2 as
+
+Helper method to improve readability.
+
+=cut
+
+sub as {
     my $thing = shift;
     ref $thing eq "ARRAY" ? ( @{$thing}, @_ ) : ($thing, @_);
 }
@@ -520,7 +569,7 @@ sub on {
 
 sub _list {
     defined wantarray
-        or croak("Cannot add traits in void context -- check for misspelled preceding comma as a semicolon");
+        or croak("Cannot add traits in void context -- check for misspelled preceding comma as a semicolon or missing use statements for models you refer_to.");
 
     wantarray
         or croak("Cannot call list traits in scalar context -- check for unneccessary 'is'");

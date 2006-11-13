@@ -5,6 +5,8 @@ package Jifty::DBI::SchemaGenerator;
 
 use base qw(Class::Accessor::Fast);
 use DBIx::DBSchema;
+use DBIx::DBSchema::Column;
+use DBIx::DBSchema::Table;
 use Class::ReturnValue;
 
 our $VERSION = '0.01';
@@ -123,6 +125,8 @@ Class::Accessor::Fast
 DBIx::DBSchema
 
 Class::ReturnValue
+
+=head1 METHODS
 
 =head2 new HANDLE
 
@@ -285,7 +289,7 @@ None reported.
 No bugs have been reported.
 
 Please report any bugs or feature requests to
-C<bug-<RT NAME>@rt.cpan.org>, or through the web interface at
+C<bug-E<lt>RT NAMEE<gt>@rt.cpan.org>, or through the web interface at
 L<http://rt.cpan.org>.
 
 =head1 AUTHOR

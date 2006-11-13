@@ -29,21 +29,21 @@ Jifty::DBI::Record - Superclass for records loaded by Jifty::DBI::Collection
 
   package MyRecord;
   use base qw/Jifty::DBI::Record/;
-  
+
 =head1 DESCRIPTION
 
-Jifty::DBI::Record encapuslates records and tables as part of the L<Jifty::DBI> 
+Jifty::DBI::Record encapuslates records and tables as part of the L<Jifty::DBI>
 object-relational mapper.
 
 =head1 METHODS
 
-=head2 new ARGS 
+=head2 new ARGS
 
 Instantiate a new, empty record object.
 
-ARGS is a hash used to pass parameters to the _init() function.
+ARGS is a hash used to pass parameters to the C<_init()> function.
 
-Unless it is overloaded, the _init() function expects one key of 
+Unless it is overloaded, the _init() function expects one key of
 'handle' with a value containing a reference to a Jifty::DBI::Handle
 object.
 
@@ -351,6 +351,10 @@ $self->_COLUMNS_CACHE(undef );
 
 =head2 column
 
+    my $value = $self->column($column);
+
+Returns the $value of a $column.
+
 =cut
 
 sub column {
@@ -362,6 +366,14 @@ sub column {
     return $col->{$name};
 
 }
+
+=head2 columns
+
+    my @columns = $record->columns;
+
+Returns a sorted list of a $record's @columns.
+
+=cut
 
 sub columns {
     my $self = shift;
@@ -409,7 +421,7 @@ As you've probably already noticed, C<Jifty::DBI::Record> autocreates methods fo
 standard get/set accessors. It also provides you with some hooks to massage the values
 being loaded or stored.
 
-When you fetch a record value by calling C<$my_record->some_field>, C<Jifty::DBI::Record>
+When you fetch a record value by calling C<$my_record-E<gt>some_field>, C<Jifty::DBI::Record>
 provides the following hook
 
 =over
@@ -543,6 +555,21 @@ sub __value {
 
     return $self->{'values'}{ $column_name };
 }
+
+=head2 as_hash 
+
+Returns a version of this object's readable columns rendered as a hash of key => value pairs
+
+=cut
+
+sub as_hash {
+    my $self = shift;
+    my %values;
+     map {$values{$_} = $self->$_()} $self->readable_attributes  ;
+     return %values;
+}
+
+
 
 =head2 _set
 
