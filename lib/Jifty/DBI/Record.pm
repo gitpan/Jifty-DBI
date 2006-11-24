@@ -324,10 +324,26 @@ sub _collection_value {
     return undef unless $classname;
     return unless UNIVERSAL::isa( $classname, 'Jifty::DBI::Collection' );
 
+    if ( my $prefetched_col = $self->_prefetched_collection($method_name)) {
+        return $prefetched_col;
+    }
+
     my $coll = $classname->new( handle => $self->_handle );
     $coll->limit( column => $column->by(), value => $self->id );
     return $coll;
 }
+
+sub _prefetched_collection {
+    my $self =shift;
+    my $column_name = shift;
+    if (@_) {
+        $self->{'_prefetched_collections'}->{$column_name} = shift;
+    } else {
+        return $self->{'_prefetched_collections'}->{$column_name};
+    }
+
+}
+
 
 =head2 add_column
 
