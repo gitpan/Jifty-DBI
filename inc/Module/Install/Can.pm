@@ -9,12 +9,12 @@ use Config ();
 use File::Spec ();
 use ExtUtils::MakeMaker ();
 
-use vars qw{$VERSION $ISCORE @ISA};
+use vars qw{$VERSION @ISA};
 BEGIN {
-	$VERSION = '0.64';
-	$ISCORE  = 1;
+	$VERSION = '0.61';
 	@ISA     = qw{Module::Install::Base};
 }
+
 
 # check if we can load some module
 ### Upgrade this to not have to load the module if possible

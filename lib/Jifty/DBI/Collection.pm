@@ -102,7 +102,7 @@ sub _init {
     );
     $self->_handle( $args{'handle'} ) if ( $args{'handle'} );
     $self->table( $self->new_item->table() );
-    $self->clean_slate();
+    $self->clean_slate(%args);
 }
 
 sub _init_pager {
@@ -125,6 +125,7 @@ cleaner to accomplish that in a different way, though.
 
 sub clean_slate {
     my $self = shift;
+    my %args = (@_);
     $self->redo_search();
     $self->_init_pager();
     $self->{'itemscount'}       = 0;
@@ -148,14 +149,15 @@ sub clean_slate {
         _open_parens
     );
 
-    $self->implicit_clauses();
+    $self->implicit_clauses(%args);
     $self->_is_limited(0);
 }
 
 =head2 implicit_clauses
 
 Called by L</clean_slate> to set up any implicit clauses that the
-collection B<always> has.  Defaults to doing nothing.
+collection B<always> has.  Defaults to doing nothing. Is passed the
+paramhash passed into L</new>.
 
 =cut
 
@@ -509,7 +511,7 @@ sub _preload_columns {
    #     push @cols, map { $_ . ".*" } keys %{ $self->preload_related || {} };
 
     }
-    return join( ', ', @cols );
+    return CORE::join( ', ', @cols );
 }
 
 =head2 class_and_column_for_alias
@@ -577,18 +579,20 @@ sub prefetch {
 
 Returns true if Jifty::DBI expects that this result set will end up
 with repeated rows and should be "condensed" down to a single row for
-each unique primary key.  Out of the box, this method returns true if
-you've joined to another table.  If you're smarter than Jifty::DBI,
-feel free to override this method in your subclass.
+each unique primary key.
 
-XXX TODO: it should be possible to create a better heuristic than the simple "is it joined?" question we're asking now. Something along the lines of "are we joining this table to something that is not the other table's primary key"
+Out of the box, this method returns true if you've joined to another table.
+To add additional logic, feel free to override this method in your subclass.
+
+XXX TODO: it should be possible to create a better heuristic than the simple
+"is it joined?" question we're asking now. Something along the lines of "are we
+joining this table to something that is not the other table's primary key"
 
 =cut
 
 sub distinct_required {
     my $self = shift;
-    return $self->_is_joined ? 1 : 0;
-
+    return( $self->_is_joined ? 1 : 0 );
 }
 
 =head2 build_select_count_query
@@ -1195,7 +1199,7 @@ sub order_by {
         $self->{'order_by'} = \@args;
         $self->redo_search();
     }
-    return $self->{'order_by'};
+    return ( $self->{'order_by'} || []);
 }
 
 =head2 _order_clause
@@ -1229,12 +1233,12 @@ sub _order_clause {
             $clause .= $rowhash{'function'} . ' ';
             $clause .= $rowhash{'order'};
 
-        } elsif ( ( $rowhash{'alias'} )
+        } elsif ( (defined $rowhash{'alias'} )
             and ( $rowhash{'column'} ) )
         {
 
             $clause .= ( $clause ? ", " : " " );
-            $clause .= $rowhash{'alias'} . ".";
+            $clause .= $rowhash{'alias'} . "." if $rowhash{'alias'};
             $clause .= $rowhash{'column'} . " ";
             $clause .= $rowhash{'order'};
         }
@@ -1596,13 +1600,38 @@ sub DEBUG {
     return ( $self->{'DEBUG'} );
 }
 
-=head2 column { column => undef } 
+=head2 column
 
-Specify that we want to load the column  column. 
+Normally a collection object contains record objects populated with all columns
+in the database, but you can restrict the records to only contain some
+particular columns, by calling the C<column> method once for each column you
+are interested in.
 
-Other parameters are table alias AND function.
+Takes a hash of parameters; the C<column>, C<table> and C<alias> keys means
+the same as in the C<limit> method.  A special C<function> key may contain
+one of several possible kinds of expressions:
 
-Autrijus and Ruslan owe docs.
+=over 4
+
+=item C<DISTINCT COUNT>
+
+Same as C<COUNT(DISTINCT ?)>.
+
+=item Expression with C<?> in it
+
+The C<?> is substituted with the column name, then passed verbatim to the
+underlying C<SELECT> statement.
+
+=item Expression with C<(> in it
+
+The expression is passed verbatim to the underlying C<SELECT>.
+
+=item Any other expression
+
+The expression is taken to be a function name.  For example, C<SUM> means
+the same thing as C<SUM(?)>.
+
+=back
 
 =cut
 
@@ -1633,7 +1662,7 @@ sub column {
 
         # If we want to substitute
         elsif ( $func =~ /\?/ ) {
-            $name = CORE::join( $name, split( /\?/, $func ) );
+            $name =~ s/\?/$name/g;
         }
 
         # If we want to call a simple function on the column
@@ -1654,7 +1683,7 @@ sub column {
 
 =head2 columns LIST
 
-Specify that we want to load only the columns in LIST
+Specify that we want to load only the columns in LIST, which is a 
 
 =cut
 

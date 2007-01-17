@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Test::More;
 
-use constant TESTS_PER_DRIVER => 15;
+use constant TESTS_PER_DRIVER => 18;
 our @available_drivers;
 
 BEGIN {
@@ -26,15 +26,23 @@ require_ok("t/testmodels.pl");
 
 foreach my $d ( @available_drivers ) {
   SKIP: {
-#   unless ($d eq 'Pg' or $d eq 'SQLite' or $d eq 'mysql') {
-    unless ($d eq 'Pg') {
-      skip "first goal is to work on Pg", TESTS_PER_DRIVER;
+    my $address_schema = has_schema('Sample::Address',$d);
+    my $employee_schema = has_schema('Sample::Employee',$d);
+    unless ($address_schema && $employee_schema) {
+      skip "need to work on $d", TESTS_PER_DRIVER;
     }
     
     unless( should_test( $d ) ) {
         skip "ENV is not defined for driver $d", TESTS_PER_DRIVER;
     }
-  
+
+    # Test that declarative schema syntax automagically sets validators
+    # correctly.
+    ok( Sample::Address->can('validate_name'), 'found validate_name' );
+    my $validator = Sample::Address->column('name')->validator;
+    ok( $validator, 'found $column->validator' );
+    is( $validator, \&Sample::Address::validate_name, 'validators match' );
+
     my $handle = get_handle( $d );
     connect_handle( $handle );
     isa_ok($handle, "Jifty::DBI::Handle::$d");
@@ -61,22 +69,9 @@ foreach my $d ( @available_drivers ) {
 
     ok($ret != 0, "added model from real class");
 
-    if ($d eq 'Pg' ) { is_ignoring_space($SG->create_table_sql_text, <<END_SCHEMA, "got the right schema");
-    CREATE TABLE addresses ( 
-      id serial NOT NULL , 
-      employee_id integer ,
-      name varchar DEFAULT 'Frank' ,
-      phone varchar ,
-      PRIMARY KEY (id)
-    ) ;
-END_SCHEMA
-
-    } else {
-     TODO: {
-            local $TODO = "Need schema for $d";
-            ok(0, "need db schema for $d");
-        };
-    }
+    is_ignoring_space($SG->create_table_sql_text, 
+                      Sample::Address->$address_schema,
+                      "got the right Address schema for $d");
 
     my $employee = Sample::Employee->new;
     
@@ -87,40 +82,14 @@ END_SCHEMA
 
     ok($ret != 0, "added model from an instantiated object");
 
-    if ($d eq 'Pg') {
-    is_ignoring_space($SG->create_table_sql_text, <<END_SCHEMA, "got the right schema");
-    CREATE TABLE addresses ( 
-      id serial NOT NULL , 
-      employee_id integer  ,
-      name varchar DEFAULT 'Frank' ,
-      phone varchar ,
-      PRIMARY KEY (id)
-    ) ;
-    CREATE TABLE employees (
-      id serial NOT NULL ,
-      dexterity integer ,
-      name varchar ,
-      label varchar ,
-      type varchar ,
-      PRIMARY KEY (id)
-    ) ;
-END_SCHEMA
-    } else {
-        TODO: {
-            local $TODO = "Need schema for $d";
-        ok(0, "need db schema for $d");
-        };
-    }
+    is_ignoring_space($SG->create_table_sql_text, 
+                      Sample::Address->$address_schema. Sample::Employee->$employee_schema, 
+                      "got the right Address+Employee schema for $d");
     
     my $manually_make_text = join ' ', map { "$_;" } $SG->create_table_sql_statements;
-    if ($d eq 'Pg') { 
-         is_ignoring_space($SG->create_table_sql_text, $manually_make_text, 'create_table_sql_text is the statements in create_table_sql_statements')
-    } else {
-        TODO: {
-            local $TODO = "Need schema for $d";
-        ok(0, "need db schema for $d");
-        };
-    }
+     is_ignoring_space($SG->create_table_sql_text, 
+                       $manually_make_text, 
+                       'create_table_sql_text is the statements in create_table_sql_statements');
 
     cleanup_schema( 'TestApp', $handle );
     disconnect_handle( $handle );

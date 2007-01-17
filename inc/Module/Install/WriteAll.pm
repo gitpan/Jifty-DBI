@@ -1,15 +1,12 @@
 #line 1
 package Module::Install::WriteAll;
 
-use strict;
 use Module::Install::Base;
+@ISA = qw(Module::Install::Base);
 
-use vars qw{$VERSION $ISCORE @ISA};
-BEGIN {
-	$VERSION = '0.64';
-	$ISCORE  = 1;
-	@ISA     = qw{Module::Install::Base};
-}
+$VERSION = '0.61';
+
+use strict;
 
 sub WriteAll {
     my $self = shift;
