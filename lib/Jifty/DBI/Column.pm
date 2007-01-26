@@ -76,10 +76,6 @@ sub validator {
 *read  = \&readable;
 *write = \&writable;
 
-sub length {
-    Carp::carp('$column->length is deprecated; use $column->max_length instead');
-    my $self = shift;
-    $self->max_length(@_);
-}
+sub length { Carp::croak('$column->length is no longer supported; use $column->max_length instead') }
 
 1;
