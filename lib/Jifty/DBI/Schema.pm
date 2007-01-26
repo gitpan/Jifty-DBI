@@ -41,12 +41,107 @@ associations between classes.
 =cut
 
 use Carp qw/croak carp/;
-use Exporter::Lite;
-our @EXPORT
-    = qw(column type default literal validator autocompleted immutable unreadable max_length length distinct mandatory not_null sort_order valid_values label hints render_as render since input_filters output_filters filters virtual is as by are on schema indexed valid order);
+use Scalar::Defer;
+use Object::Declare (
+    mapping => {
+        column => sub { Jifty::DBI::Column->new({@_}) } ,
+    },
+    aliases => {
+        default_value => 'default',
+        available   => 'available_values',
+        valid       => 'valid_values',
+        render      => 'render_as',
+        order       => 'sort_order',
+        filters     => 'input_filters',
+    },
+    copula  => {
+        is          => '',
+        are         => '',
+        as          => '',
+        ajax        => 'ajax_',
+        refers_to   => sub { refers_to => @_ },
+        refers      => sub { refers_to => @_ },
+    }
+);
+use Class::Data::Inheritable;
+
+our @EXPORT = qw( defer lazy column schema by );
 
 our $SCHEMA;
 our $SORT_ORDERS = {};
+
+use Exporter::Lite ();
+# TODO - This "sub import" is strictly here to catch the deprecated "length is 40".
+#        Once the deprecation cycle is over we should take this away and rever to
+#        "use Exporter::Lite" in the line above.
+sub import {
+    my $old_sig_die = $SIG{__DIE__};
+
+    $SIG{__DIE__} = sub {
+        # Calling it by hand means we restore the old sighandler.
+        $SIG{__DIE__} = (($old_sig_die == $SIG{__DIE__}) ? undef : $old_sig_die);
+        return unless @_;
+
+        local $SIG{__DIE__} = sub { 1 };
+        if ($_[0] =~ /near "is (\d+)"/) {
+            carp @_, << ".";
+
+*********************************************************
+
+ Due to an incompatible API change, the "length" field in
+ Jifty::DBI columns has been renamed to "max_length":
+ 
+     column foo =>
+         length is $1;       # NOT VALID 
+
+ Please write this instead:
+ 
+     column foo =>
+         max_length is $1    # VALID
+
+ Sorry for the inconvenience.
+
+**********************************************************
+
+
+.
+            exit 1;
+        }
+        elsif ($_[0] =~ /Undefined subroutine &Jifty::DBI::Schema::column|Can't locate object method "type" via package "(?:is|are)"/) {
+            my $from = (caller)[0];
+            $from =~ s/::Schema$//;
+            my $base = $INC{'Jifty/Record.pm'} ? "Jifty::Record" : "Jifty::DBI::Record";
+
+            no strict 'refs';
+            carp @_, << ".";
+*********************************************************
+
+ Calling 'column' within a schema class is an error:
+ 
+    package $from\::Schema;
+    column foo => ...;        # NOT VALID
+
+ Please write this instead:
+
+    package $from;
+    use Jifty::DBI::Schema;
+    use @{[(${"$from\::ISA"} || [$base])->[0] || $base]} schema {
+        column foo => ...;    # VALID
+    };
+
+ Sorry for the inconvenience.
+
+*********************************************************
+.
+        }
+
+        die @_;
+    };
+
+    goto &Exporter::Lite::import;
+}
+
+sub by { @_ }
 
 =head1 FUNCTIONS
 
@@ -68,66 +163,83 @@ If your application subclasses C<::Record>, then write this instead:
 
 sub schema (&) {
     my $code = shift;
-
-    my $from = (caller)[0];
+    my $from = caller;
 
     my $new_code = sub {
-        $code->();
+	no warnings 'redefine';
+	local *_ = sub { my $args = \@_; defer { _(@$args) } };
+	$from->_init_columns;
 
-        # Unimport all our symbols from the calling package.
-        foreach my $sym (@EXPORT) {
-            no strict 'refs';
-            undef *{"$from\::$sym"}
-                if \&{"$from\::$sym"} == \&$sym;
-        }
+	my @columns = &declare($code);
 
-        # Then initialize all columns
-        foreach my $column (sort keys %{$from->COLUMNS||{}}) {
-            $from->_init_methods_for_column($from->COLUMNS->{$column});
-        }
+	# Unimport all our symbols from the calling package.
+	foreach my $sym (@EXPORT) {
+	    no strict 'refs';
+	    undef *{"$from\::$sym"}
+		if \&{"$from\::$sym"} == \&$sym;
+	}
+
+	foreach my $column (@columns) {
+	    next if !ref($column);
+	    _init_column($column);
+	}
+
+	# Then initialize all columns
+	foreach my $column ( sort keys %{ $from->COLUMNS || {} } ) {
+	    $from->_init_methods_for_column( $from->COLUMNS->{$column} );
+	}
     };
 
-    return('-base' => $new_code);
+    return ('-base' => $new_code);
 }
 
-=head2 column
+use Hash::Merge ();
 
-Set forth the description of a column in the data store.
+no warnings 'uninitialized';
+use constant MERGE_PARAM_BEHAVIOUR => {
+    SCALAR => {
+            SCALAR => sub { CORE::length($_[1]) ? $_[1] : $_[0] },
+            ARRAY  => sub { [ @{$_[1]} ] },
+            HASH   => sub { $_[1] } },
+    ARRAY => {
+            SCALAR => sub { CORE::length($_[1]) ? $_[1] : $_[0] },
+            ARRAY  => sub { [ @{$_[1]} ] },
+            HASH   => sub { $_[1] } },
+    HASH => {
+            SCALAR => sub { CORE::length($_[1]) ? $_[1] : $_[0] },
+            ARRAY  => sub { [ @{$_[1]} ] },
+            HASH   => sub { Hash::Merge::_merge_hashes( $_[0], $_[1] ) } }
+};
 
-Note: If the column uses 'refers_to' to reference another class then you 
-should not name the column ending in '_id' as it has special meaning.
+=head2 merge_params HASHREF HASHREF
+
+Takes two hashrefs. Merges them together and returns the merged hashref.
+
+    - Empty fields in subclasses don't override nonempty fields in superclass anymore.
+    - Arrays don't merge; e.g. if parent class's valid_values is [1,2,3,4], and
+      subclass's valid_values() is [1,2], they don't somehow become [1,2,3,4,1,2].
+
+BUG: This should either be a private routine or factored out into Jifty::Util
+
+
 
 =cut
 
-sub column {
-    my $name = lc(shift);
+sub merge_params {
+    my $prev_behaviour = Hash::Merge::get_behavior();
+    Hash::Merge::specify_behavior( MERGE_PARAM_BEHAVIOUR, "merge_params" );
+    my $rv = Hash::Merge::merge(@_);
+    Hash::Merge::set_behavior( $prev_behaviour );
+    return $rv;
+}
 
-    my $from = (caller)[0];
-    if ($from =~ s/::Schema$//) {
-        no strict 'refs';
 
-        carp << "." unless $from->{_seen_column_warning}++;
+sub _init_column {
+    my $column = shift;
+    my $name   = $column->name;
 
-*********************************************************
-
- Calling 'column' within a schema class is deprecated:
- 
-    package $from\::Schema;
-    column $name => ...;        # NOT VALID
-
- Please write this instead:
-
-    package $from;
-    use Jifty::DBI::Schema;
-    use @{[${"$from\::ISA"}[0] || "Jifty::DBI::Record"]} schema {
-        column $name => ...;    # VALID
-    };
-
- Sorry for the inconvenience.
-
-*********************************************************
-.
-    }
+    my $from = (caller(2))[0];
+    $from =~ s/::Schema//;
 
     croak "Base of schema class $from is not a Jifty::DBI::Record"
       unless UNIVERSAL::isa($from, "Jifty::DBI::Record");
@@ -135,23 +247,23 @@ sub column {
     croak "Illegal column definition for column $name in $from"
       if grep {not UNIVERSAL::isa($_, "Jifty::DBI::Schema::Trait")} @_;
 
-    $from->_init_columns;
+    $column->readable(!(delete $column->{unreadable}));
+    $column->writable(!(delete $column->{immutable}));
 
+    # XXX: deprecated
+    $column->mandatory(1) if delete $column->{not_null};
 
-    my @args = (
-        ! unreadable(),
-        ! immutable(),
-        ! virtual(),
-        type(''),
-        @_
-    );
-
-    my $column = Jifty::DBI::Column->new( { name => $name } );
     $column->sort_order($SORT_ORDERS->{$from}++);
 
-    $_->apply($column) for @args;
+    $column->input_filters($column->{input_filters} || []);
+    $column->output_filters($column->{output_filters} || []);
 
     if ( my $refclass = $column->refers_to ) {
+        if (ref($refclass) eq 'ARRAY') {
+            $column->by($refclass->[1]);
+            $column->refers_to($refclass = $refclass->[0]);
+        }
+
         $refclass->require();
         $column->type('integer') unless ( $column->type );
 
@@ -166,7 +278,7 @@ sub column {
                 # alias_for_column in a couple places
                 $virtual_column->name( $name );
                 $virtual_column->aliased_as($aliased_as);
-                $_->apply($virtual_column) for @args;
+#                $_->apply($virtual_column) for @args;
                 $column->refers_to(undef);
                 $virtual_column->alias_for_column($name);
                 $from->_init_methods_for_column($virtual_column);
@@ -191,11 +303,11 @@ sub column {
     # through the &schema wrapper, so we defer initialization here
     # to not upset column names such as "label" and "type".
     # (We may not *have* a caller(1) if the user is executing a .pm file.)
-    my $caller1 = caller(1);
-    return if defined $caller1 && $caller1 eq __PACKAGE__;
-
-    $from->_init_methods_for_column($column)
 }
+
+1;
+
+__END__
 
 =head2 refers_to
 
@@ -233,22 +345,10 @@ The impact of this is that not all column types are portable between
 databases.  For example blobs have different names between
 mysql and postgres.
 
-=cut
-
-sub type {
-    _list( type => @_ );
-}
-
 =head2 default
 
 Give a default value for the column.  Correct usage is C<default is
 'foo'>.
-
-=cut
-
-sub default {
-    _list( default => @_ );
-}
 
 =head2 literal
 
@@ -256,35 +356,16 @@ Used for default values, to connote that they should not be quoted
 before being supplied as the default value for the column.  Correct
 usage is C<default is literal 'now()'>.
 
-=cut
-
-sub literal($) {
-    my $value = shift;
-    return \$value;
-}
-
 =head2 validator
 
 Defines a subroutine which returns a true value only for valid values
 this column can have.  Correct usage is C<validator is \&foo>.
-
-=cut
-
-sub validator {
-    _list( validator => @_ );
-}
 
 =head2 immutable
 
 States that this column is not writable.  This is useful for
 properties that are set at creation time but not modifiable
 thereafter, like 'created by'.  Correct usage is C<is immutable>.
-
-=cut
-
-sub immutable {
-    _item( writable => 0, @_ );
-}
 
 =head2 unreadable
 
@@ -293,57 +374,12 @@ using C<< $record->column >>; this is useful for password columns and
 the like.  The data is still accessible via C<< $record->_value('') >>.
 Correct usage is C<is unreadable>.
 
-=cut
-
-sub unreadable {
-    _item( readable => 0, @_ );
-}
-
 =head2 max_length
 
-Sets a maximum length to store in the database; values longer than
+Sets a maximum max_length to store in the database; values longer than
 this are truncated before being inserted into the database, using
 L<Jifty::DBI::Filter::Truncate>.  Note that this is in B<bytes>, not
 B<characters>.  Correct usage is C<max_length is 42>.
-
-=cut
-
-sub max_length {
-    _list( max_length => @_ );
-}
-
-=head2 length
-
-DEPRECATED alias for C<max_length>.  Do not use; this will go away in the
-next version.
-
-=cut
-
-sub length {
-    no strict 'refs';
-    carp << "." unless caller()->{_seen_length_warning}++;
-
-*********************************************************
-
- Due to an incompatible API change, the "length" field in
- Jifty::DBI columns has been renamed to "max_length":
- 
-     column foo =>
-         length is $_[0];       # NOT VALID 
-
- Please write this instead:
- 
-     column foo =>
-         max_length is $_[0]    # VALID
-
- Sorry for the inconvenience.
-
-**********************************************************
-
-
-.
-    _list( max_length => @_ );
-}
 
 
 =head2 mandatory
@@ -351,34 +387,15 @@ sub length {
 Mark as a required column.  May be used for generating user
 interfaces.  Correct usage is C<is mandatory>.
 
-=cut
-
-sub mandatory {
-    _item( mandatory => 1, @_ );
-}
-
 =head2 not_null
 
 Same as L</mandatory>.  This is deprecated.  Currect usage would be
 C<is not_null>.
 
-=cut
-
-sub not_null {
-    carp "'is not_null' is deprecated in favor of 'is mandatory'";
-    _item( mandatory => 1, @_ );
-}
-
 =head2 autocompleted
 
 Mark as an autocompleted column.  May be used for generating user
 interfaces.  Correct usage is C<is autocompleted>.
-
-=cut
-
-sub autocompleted {
-    _item( autocompleted => 1, @_ );
-}
 
 =head2 distinct
 
@@ -389,43 +406,19 @@ themselves. This is because there is no support for distinct
 columns implemented in L<DBIx::DBSchema> at this time.  
 Correct usage is C<is distinct>.
 
-=cut
-
-sub distinct {
-    _item( distinct => 1, @_ );
-}
-
 =head2 virtual
 
 Declares that a column is not backed by an actual column in the
 database, but is instead computed on-the-fly.
-
-=cut
-
-sub virtual {
-    _item( virtual => 1, @_ );
-}
-
 
 =head2 sort_order
 
 Declares an integer sort value for this column. By default, Jifty will sort
 columns in the order they are defined.
 
-=cut
-
-sub sort_order {
-    _item ( sort_order => (shift @_ || 0));
-}
-
 =head2 order
 
 Alias for C<sort_order>.
-
-=cut
-
-sub order { sort_order(@_) }
-
 
 =head2 input_filters
 
@@ -433,24 +426,12 @@ Sets a list of input filters on the data.  Correct usage is
 C<input_filters are 'Jifty::DBI::Filter::DateTime'>.  See
 L<Jifty::DBI::Filter>.
 
-=cut
-
-sub input_filters {
-    _list( input_filters => @_ );
-}
-
 =head2 output_filters
 
 Sets a list of output filters on the data.  Correct usage is
 C<output_filters are 'Jifty::DBI::Filter::DateTime'>.  See
 L<Jifty::DBI::Filter>.  You usually don't need to set this, as the
 output filters default to the input filters in reverse order.
-
-=cut
-
-sub output_filters {
-    _list( output_filters => @_ );
-}
 
 =head2 filters
 
@@ -460,22 +441,10 @@ B<and> writing to the database.  Correct usage is C<filters are
 actuality, this is the exact same as L</input_filters>, since output
 filters default to the input filters, reversed.
 
-=cut
-
-sub filters {
-    _list( input_filters => @_ );
-}
-
 =head2 since
 
 What application version this column was last changed.  Correct usage
 is C<since '0.1.5'>.
-
-=cut
-
-sub since {
-    _list( since => @_ );
-}
 
 =head2 valid_values
 
@@ -492,44 +461,20 @@ and value.
   { display => 'Blue', value => 'blue' },
   { display => 'Red', value => 'red' }
 
-=cut
-
-sub valid_values {
-    _list( valid_values => @_ );
-}
-
 =head2 valid
 
 Alias for C<valid_values>.
-
-=cut
-
-sub valid {
-    _list( valid_values => @_ );
-}
 
 =head2 label
 
 Designates a human-readable label for the column, for use in user
 interfaces.  Correct usage is C<label is 'Your foo value'>.
 
-=cut
-
-sub label {
-    _list( label => @_ );
-}
-
 =head2 hints
 
 A sentence or two to display in long-form user interfaces about what
 might go in this column.  Correct usage is C<hints is 'Used by the
 frobnicator to do strange things'>.
-
-=cut
-
-sub hints {
-    _list( hints => @_ );
-}
 
 =head2 render_as
 
@@ -574,108 +519,15 @@ internal fields that should not actually be displayed.
 If these don't meet your needs, you can write your own subclass of
 L<Jifty::Web::Form::Field>. See the documentation for that module.
 
-=cut
-
-sub render_as {
-    _list( render_as => @_ );
-}
-
 =head2 render
 
 Alias for C<render_as>.
-
-=cut
-
-sub render {
-    _list( render_as => @_ );
-}
 
 =head2 indexed
 
 An index will be built on this column
 Correct usage is C<is indexed>
 
-=cut
-
-sub indexed {
-    _list( indexed => 1, @_ );
-}
-
-=head2 by
-
-Helper method to improve readability.
-
-=cut
-
-sub by {
-    _list( by => @_ );
-}
-
-=head2 is
-
-Helper method to improve readability.
-
-=cut
-
-sub is {
-    my $thing = shift;
-    ref $thing eq "ARRAY" ? ( @{$thing}, @_ ) : ($thing, @_);
-}
-
-=head2 as
-
-Helper method to improve readability.
-
-=cut
-
-sub as {
-    my $thing = shift;
-    ref $thing eq "ARRAY" ? ( @{$thing}, @_ ) : ($thing, @_);
-}
-
-=head2 are
-
-Helper method to improve readability.
-
-=cut
-
-sub are {
-    my $ref = [];
-    push @{$ref}, shift @_ while @_ and not UNIVERSAL::isa($_[0], "Jifty::DBI::Schema::Trait");
-    return( $ref, @_ );
-}
-
-=head2 on
-
-Helper method to improve readability.
-
-=cut
-
-sub on {
-    _list( self => shift );
-}
-
-sub _list {
-    defined wantarray
-        or croak("Cannot add traits in void context -- check for misspelled preceding comma as a semicolon or missing use statements for models you refer_to.");
-
-    wantarray
-        or croak("Cannot call list traits in scalar context -- check for unneccessary 'is'");
-    _trait(@_);
-}
-
-sub _item {
-    defined wantarray
-        or croak("Cannot add traits in void context -- check for misspelled preceding comma as a semicolon");
-
-    _trait(@_);
-}
-
-sub _trait {
-    my @trait;
-    push @trait, shift @_ while @_ and not UNIVERSAL::isa($_[0], "Jifty::DBI::Schema::Trait");
-    return wantarray ? (Jifty::DBI::Schema::Trait->new(@trait), @_) : Jifty::DBI::Schema::Trait->new(@trait);
-}
 
 =head1 EXAMPLE
 
@@ -691,33 +543,5 @@ This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut
-
-package Jifty::DBI::Schema::Trait;
-
-use overload "!" => \&negation;
-use Carp qw/croak/;
-
-sub new {
-    my $class = shift;
-    return bless [@_], $class;
-}
-
-sub apply {
-    my $self = shift;
-    my ($column) = @_;
-
-    my ($method, $argument) = @{$self};
-
-    croak("Illegal Jifty::DBI::Schema property '$method'")
-      unless $column->can($method);
-
-    $column->$method($argument);
-}
-
-sub negation {
-    my $self = shift;
-    my ($trait, @rest) = @{$self};
-    return (ref $self)->new($trait, map {not $_} @rest);
-}
 
 1;

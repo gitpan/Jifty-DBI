@@ -138,7 +138,6 @@ sub _accessible {
     my $self        = shift;
     my $column_name = shift;
     my $attribute   = lc( shift || '' );
-
     my $col = $self->column($column_name);
     return undef unless ( $col and $col->can($attribute) );
     return $col->$attribute();
@@ -184,6 +183,7 @@ sub _init_columns {
         $column->readable(1);
         $column->type('serial');
         $column->mandatory(1);
+
         $self->_init_methods_for_column($column);
     }
 }
@@ -330,6 +330,7 @@ sub _collection_value {
         return $prefetched_col;
     }
 
+    use Devel::SimpleTrace;
     my $coll = $classname->new( handle => $self->_handle );
     $coll->limit( column => $column->by(), value => $self->id );
     return $coll;
@@ -381,7 +382,6 @@ sub column {
     my $self = shift;
     my $name = lc( shift || '' );
     my $col = $self->COLUMNS;
-
     return undef unless $col && exists $col->{$name};
     return $col->{$name};
 
@@ -1163,11 +1163,6 @@ used for the declarative syntax
 
 
 =cut
-
-sub refers_to {
-    my $class = shift;
-    return ( Jifty::DBI::Schema::Trait->new(refers_to => $class), @_ );
-}
 
 sub _filters {
     my $self = shift;
