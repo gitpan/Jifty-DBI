@@ -1754,6 +1754,17 @@ sub table {
     return $self->{table};
 }
 
+=head2 refers_to
+
+Private convenience method needed for the declarative schema generation.
+
+=cut
+
+sub refers_to {
+    my $class = shift;
+    return ( Jifty::DBI::Schema::Trait->new( refers_to => $class ), @_ );
+}
+
 =head2 clone
 
 Returns copy of the current object with all search restrictions.

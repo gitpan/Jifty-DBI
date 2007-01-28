@@ -38,6 +38,7 @@ SKIP: {
         is( $rec->_accessible('id' => 'write'), 0, 'id is not accessible for write' );
         is( $rec->_accessible('id'), undef, "any column is not accessible in undefined mode" );
         is( $rec->_accessible('unexpected_column' => 'read'), undef, "column doesn't exist and can't be accessible for read" );
+
         is_deeply( [sort($rec->readable_attributes)], [sort qw(address employee_id id name phone)], 'readable attributes' );
         is_deeply( [sort($rec->writable_attributes)], [sort qw(address employee_id name phone)], 'writable attributes' );
 
@@ -278,10 +279,11 @@ use Jifty::DBI::Schema;
 use Jifty::DBI::Record schema {
 
 column name =>
+  till 999,
   type is 'varchar(14)';
 
 column phone =>
-  type is 'varchar(18)';
+  type is 'varchar(18)',
 
 column address =>
   type is 'varchar(50)',

@@ -1,15 +1,12 @@
 #line 1
 package Module::Install::Metadata;
 
-use strict 'vars';
 use Module::Install::Base;
+@ISA = qw{Module::Install::Base};
 
-use vars qw{$VERSION $ISCORE @ISA};
-BEGIN {
-	$VERSION = '0.64';
-	$ISCORE  = 1;
-	@ISA     = qw{Module::Install::Base};
-}
+$VERSION = '0.61';
+
+use strict 'vars';
 
 my @scalar_keys = qw{
     name module_name abstract author version license
@@ -123,9 +120,9 @@ sub auto_provides {
 
     require Module::Build;
     my $build = Module::Build->new(
-        dist_name    => $self->name,
-        dist_version => $self->version,
-        license      => $self->license,
+        dist_name    => $self->{name},
+        dist_version => $self->{version},
+        license      => $self->{license},
     );
     $self->provides(%{ $build->find_dist_packages || {} });
 }
@@ -238,13 +235,11 @@ sub perl_version_from {
         ^
         use \s*
         v?
-        ([\d_\.]+)
+        ([\d\.]+)
         \s* ;
     /ixms
       )
     {
-        my $v = $1;
-        $v =~ s{_}{}g;
         $self->perl_version($1);
     }
     else {
@@ -279,11 +274,9 @@ sub license_from {
 
     if (
         $self->_slurp($file) =~ m/
-        (
-            =head \d \s+
-            (?:licen[cs]e|licensing|copyright|legal)\b
-            .*?
-        )
+        =head \d \s+
+        (?:licen[cs]e|licensing|copyright|legal)\b
+        (.*?)
         (=head\\d.*|=cut.*|)
         \z
     /ixms
@@ -300,7 +293,6 @@ sub license_from {
             'LGPL'                                            => 'lgpl',
             'BSD'                                             => 'bsd',
             'Artistic'                                        => 'artistic',
-            'MIT'                                             => 'MIT',
         );
         while ( my ( $pattern, $license ) = splice( @phrases, 0, 2 ) ) {
             $pattern =~ s{\s+}{\\s+}g;
