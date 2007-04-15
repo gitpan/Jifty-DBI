@@ -32,7 +32,7 @@ perl objects
 =head1 DESCRIPTION
 
 This module provides an object-oriented mechanism for retrieving and
-updating data in a DBI-accesible database.
+updating data in a DBI-accessible database.
 
 In order to use this module, you should create a subclass of
 L<Jifty::DBI::Collection> and a subclass of L<Jifty::DBI::Record> for
@@ -738,6 +738,13 @@ sub items_array_ref {
     return ( $self->{'items'} || [] );
 }
 
+=head2 new_item
+
+Should return a new object of the correct type for the current collection.
+Must be overridden by a subclassed.
+
+=cut
+
 sub new_item {
     my $self  = shift;
     my $class = $self->record_class();
@@ -1015,7 +1022,7 @@ sub limit {
 
         # don't worry about case for numeric columns_in_db
         my $column_obj = $self->new_item()->column( $args{column} );
-        if ( defined $column_obj ? !$column_obj->is_numeric : 1 ) {
+        if ( defined $column_obj ? $column_obj->is_string : 1 ) {
             ( $qualified_column, $args{'operator'}, $args{'value'} )
                 = $self->_handle->_make_clause_case_insensitive(
                 $qualified_column, $args{'operator'}, $args{'value'} );
@@ -1594,6 +1601,12 @@ sub is_last {
     }
 }
 
+=head2 DEBUG
+
+Gets/sets the DEBUG flag.
+
+=cut
+
 sub DEBUG {
     my $self = shift;
     if (@_) {
@@ -1752,17 +1765,6 @@ sub table {
     my $self = shift;
     $self->{table} = shift if (@_);
     return $self->{table};
-}
-
-=head2 refers_to
-
-Private convenience method needed for the declarative schema generation.
-
-=cut
-
-sub refers_to {
-    my $class = shift;
-    return ( Jifty::DBI::Schema::Trait->new( refers_to => $class ), @_ );
 }
 
 =head2 clone

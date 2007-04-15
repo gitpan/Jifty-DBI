@@ -6,7 +6,7 @@ use Test::More;
 BEGIN { require "t/utils.pl" }
 our (@available_drivers);
 
-use constant TESTS_PER_DRIVER => 18;
+use constant TESTS_PER_DRIVER => 16;
 
 my $total = scalar(@available_drivers) * TESTS_PER_DRIVER;
 plan tests => $total;
@@ -52,11 +52,6 @@ SKIP: {
         # undef/NULL
         $rec->set_created;
         is($rec->created, undef, "Set undef value" );
-
-        # Create using default undef
-        my $rec2 = TestApp::User->new( handle => $handle );
-        isa_ok($rec2, 'Jifty::DBI::Record');
-        is($rec2->created, undef, 'Default of undef');
 
         # from string
         require POSIX;
@@ -114,24 +109,25 @@ EOF
 }
 
 BEGIN {
-    use Jifty::DBI::Schema;
-
-
-    use Jifty::DBI::Record schema {
-    column created =>
-      type is 'datetime',
-      filters are qw/Jifty::DBI::Filter::DateTime/,
-      default is undef;
-
-    column event_on =>
-      type is 'date',
-      filters are qw/Jifty::DBI::Filter::Date/;
-
-    column event_stops =>
-      type is 'time',
-      filters are qw/Jifty::DBI::Filter::Time/;
+use Jifty::DBI::Schema;
+Jifty::DBI::Schema->register_types(
+    Date =>
+        sub { type is 'date', input_filters are qw/Jifty::DBI::Filter::Date/ },
+    Time =>
+        sub { type is 'time', input_filters are qw/Jifty::DBI::Filter::Time/ },
+    DateTime => sub {
+        type is 'datetime',
+        input_filters are qw/Jifty::DBI::Filter::DateTime/
     }
+);
 }
+
+use Jifty::DBI::Record schema {
+    column created     => is DateTime;
+    column event_on    => is Date;
+    column event_stops => is Time;
+};
+
 
 1;
 

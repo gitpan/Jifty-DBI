@@ -8,7 +8,7 @@ use Test::More;
 BEGIN { require "t/utils.pl" }
 our (@available_drivers);
 
-use constant TESTS_PER_DRIVER => 70;
+use constant TESTS_PER_DRIVER => 71;
 
 my $total = scalar(@available_drivers) * TESTS_PER_DRIVER;
 plan tests => $total;
@@ -38,7 +38,6 @@ SKIP: {
         is( $rec->_accessible('id' => 'write'), 0, 'id is not accessible for write' );
         is( $rec->_accessible('id'), undef, "any column is not accessible in undefined mode" );
         is( $rec->_accessible('unexpected_column' => 'read'), undef, "column doesn't exist and can't be accessible for read" );
-
         is_deeply( [sort($rec->readable_attributes)], [sort qw(address employee_id id name phone)], 'readable attributes' );
         is_deeply( [sort($rec->writable_attributes)], [sort qw(address employee_id name phone)], 'writable attributes' );
 
@@ -49,6 +48,13 @@ SKIP: {
         my $record2 = TestApp::Address->create( _handle => $handle, name => 'Enoch', phone => '123 456 7890');
         isa_ok($record2, 'TestApp::Address');
         ok($record2->id, "Created a record with a class method");
+        is_deeply({ $record2->as_hash }, {
+            id          => $record2->id,
+            employee_id => undef,
+            name        => 'Enoch',
+            address     => '',
+            phone       => '123 456 7890',
+        }, 'as_hash works');
 
         my $clone2 = TestApp::Address->load_by_cols( _handle => $handle, name => 'Enoch');
         isa_ok($clone2, 'TestApp::Address');
@@ -283,7 +289,7 @@ column name =>
   type is 'varchar(14)';
 
 column phone =>
-  type is 'varchar(18)',
+  type is 'varchar(18)';
 
 column address =>
   type is 'varchar(50)',

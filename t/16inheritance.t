@@ -6,7 +6,7 @@ use Test::More;
 BEGIN { require "t/utils.pl" }
 our (@available_drivers);
 
-use constant TESTS_PER_DRIVER => 18;
+use constant TESTS_PER_DRIVER => 17;
 
 my $total = scalar(@available_drivers) * TESTS_PER_DRIVER;
 plan tests => $total;
@@ -15,7 +15,7 @@ use DateTime ();
 
 foreach my $d ( @available_drivers ) {
 SKIP: {
-        unless( has_schema( 'TestApp::User', $d ) ) {
+        unless( has_schema( 'TestApp::CrazyUser', $d ) ) {
                 skip "No schema for '$d' driver", TESTS_PER_DRIVER;
         }
         unless( should_test( $d ) ) {
@@ -29,8 +29,9 @@ SKIP: {
 
         {my $ret = init_schema( 'TestApp::User', $handle );
         isa_ok($ret,'DBI::st', "Inserted the schema. got a statement handle back" );}
-
-        my $rec = TestApp::User->new( handle => $handle );
+        {my $ret = init_schema( 'TestApp::CrazyUser', $handle );
+        isa_ok($ret,'DBI::st', "Inserted the schema. got a statement handle back" );}
+        my $rec = TestApp::CrazyUser->new( handle => $handle );
         isa_ok($rec, 'Jifty::DBI::Record');
 
         my $now = time;
@@ -52,11 +53,6 @@ SKIP: {
         # undef/NULL
         $rec->set_created;
         is($rec->created, undef, "Set undef value" );
-
-        # Create using default undef
-        my $rec2 = TestApp::User->new( handle => $handle );
-        isa_ok($rec2, 'Jifty::DBI::Record');
-        is($rec2->created, undef, 'Default of undef');
 
         # from string
         require POSIX;
@@ -114,24 +110,76 @@ EOF
 }
 
 BEGIN {
-    use Jifty::DBI::Schema;
-
-
-    use Jifty::DBI::Record schema {
-    column created =>
-      type is 'datetime',
-      filters are qw/Jifty::DBI::Filter::DateTime/,
-      default is undef;
-
-    column event_on =>
-      type is 'date',
-      filters are qw/Jifty::DBI::Filter::Date/;
-
-    column event_stops =>
-      type is 'time',
-      filters are qw/Jifty::DBI::Filter::Time/;
+use Jifty::DBI::Schema;
+Jifty::DBI::Schema->register_types(
+    Date =>
+        sub { type is 'date', input_filters are qw/Jifty::DBI::Filter::Date/ },
+    Time =>
+        sub { type is 'time', input_filters are qw/Jifty::DBI::Filter::Time/ },
+    DateTime => sub {
+        type is 'datetime',
+        input_filters are qw/Jifty::DBI::Filter::DateTime/
     }
+);
 }
+
+use Jifty::DBI::Record schema {
+    column created     => is DateTime;
+    column event_on    => is Date;
+    column event_stops => is Time;
+};
+
+package TestApp::CrazyUser;
+BEGIN {
+our @ISA =qw(TestApp::User);
+}
+use Jifty::DBI::Schema;
+use Jifty::DBI::Record schema {
+    column craziness => type is 'text';
+#    column event_on  => is mandatory;
+};
+
+sub schema_sqlite {
+
+<<EOF;
+CREATE table crazy_users (
+        id integer primary key,
+        craziness varchar(16),
+        created datetime,
+        event_on date,
+        event_stops time
+)
+EOF
+
+}
+
+sub schema_mysql {
+
+<<EOF;
+CREATE TEMPORARY table crazy_users (
+        id integer auto_increment primary key,
+        created datetime,
+        event_on date,
+        event_stops time
+)
+EOF
+
+}
+
+sub schema_pg {
+
+<<EOF;
+CREATE TEMPORARY table crazy_users (
+        id serial primary key,
+        craziness varchar(16),
+        created timestamp,
+        event_on date,
+        event_stops time
+)
+EOF
+
+}
+
 
 1;
 
