@@ -12,21 +12,27 @@ perl objects
 
   use Jifty::DBI::Collection;
   
-  package My::Things;
+  package My::ThingCollection;
   use base qw/Jifty::DBI::Collection/;
+
+  package My::Thing;
+  use Jifty::DBI::Schema;
+  use Jifty::DBI::Record schema {
+    column column_1 => type is 'text';
+  };
   
   package main;
 
   use Jifty::DBI::Handle;
   my $handle = Jifty::DBI::Handle->new();
-  $handle->connect( Driver => 'SQLite', Database => "my_test_db" );
+  $handle->connect( driver => 'SQLite', database => "my_test_db" );
 
-  my $sb = My::Things->new( handle => $handle );
+  my $sb = My::ThingCollection->new( handle => $handle );
 
   $sb->limit( column => "column_1", value => "matchstring" );
 
   while ( my $record = $sb->next ) {
-      print $record->my_column_name();
+      print $record->id;
   }
 
 =head1 DESCRIPTION
@@ -147,6 +153,7 @@ sub clean_slate {
         subclauses
         restrictions
         _open_parens
+        criteria_count
     );
 
     $self->implicit_clauses(%args);
@@ -387,7 +394,7 @@ together.
 
 sub _is_joined {
     my $self = shift;
-    if ( %{ $self->{'leftjoins'} } ) {
+    if ( $self->{'leftjoins'} && keys %{ $self->{'leftjoins'} } ) {
         return (1);
     } else {
         return ( @{ $self->{'aliases'} } );
@@ -416,7 +423,11 @@ sub _limit_clause {
 =head2 _is_limited
 
 If we've limited down this search, return true. Otherwise, return
-false.
+false. 
+
+C<1> means "we have limits"
+C<-1> means "we should return all rows. We want no where clause"
+C<0> means "no limits have been applied yet.
 
 =cut
 
@@ -650,7 +661,27 @@ database.
 
 sub next {
     my $self = shift;
-    my @row;
+
+    my $item = $self->peek;
+
+    if ( $self->{'itemscount'} < $self->_record_count )
+    {
+        $self->{'itemscount'}++;
+    } else {    #we've gone through the whole list. reset the count.
+        $self->goto_first_item();
+    }
+
+    return ($item);
+}
+
+=head2 peek
+
+Exactly the same as next, only it doesn't move the iterator.
+
+=cut
+
+sub peek {
+    my $self = shift;
 
     return (undef) unless ( $self->_is_limited );
 
@@ -659,10 +690,8 @@ sub next {
     if ( $self->{'itemscount'} < $self->_record_count )
     {    #return the next item
         my $item = ( $self->{'items'}[ $self->{'itemscount'} ] );
-        $self->{'itemscount'}++;
         return ($item);
-    } else {    #we've gone through the whole list. reset the count.
-        $self->goto_first_item();
+    } else {    #no more items!
         return (undef);
     }
 }
@@ -777,6 +806,8 @@ sub record_class {
     my $self = shift;
     if (@_) {
         $self->{record_class} = shift if (@_);
+        $self->{record_class} = ref $self->{record_class}
+            if ref $self->{record_class};
     } elsif ( not $self->{record_class} ) {
         my $class = ref($self);
         $class =~ s/Collection$//
@@ -802,8 +833,11 @@ sub redo_search {
 
 =head2 unlimit
 
-Clears all restrictions and causes this object to return all
-rows in the primary table.
+Unlimit clears all restrictions on this collection and resets
+it to a "default" pristine state. Note, in particular, that 
+this means C<unlimit> will erase ordering and grouping 
+metadata.  To find all rows without resetting this metadata,
+use the C<find_all_rows> method.
 
 =cut
 
@@ -811,6 +845,19 @@ sub unlimit {
     my $self = shift;
 
     $self->clean_slate();
+    $self->_is_limited(-1);
+}
+
+=head2 find_all_rows
+
+C<find_all_rows> instructs this collection class to return all rows in
+the table. (It removes the WHERE clause from your query).
+
+=cut
+
+
+sub find_all_rows {
+    my $self = shift;
     $self->_is_limited(-1);
 }
 
@@ -870,6 +917,11 @@ STARTSWITH is like LIKE, except it only appends a % at the end of the string
 
 ENDSWITH is like LIKE, except it prepends a % to the beginning of the string
 
+=item "IN"
+
+IN matches a column within a set of values.  The value specified in the limit
+should be an array reference of values.
+
 =back
 
 =item entry_aggregator 
@@ -902,8 +954,6 @@ sub limit {
         @_    # get the real argumentlist
     );
 
-    my ($Alias);
-
     # We need to be passed a column and a value, at very least
     croak "Must provide a column to limit"
         unless defined $args{column};
@@ -911,8 +961,16 @@ sub limit {
         unless defined $args{value};
 
     # make passing in an object DTRT
-    if ( ref( $args{value} ) && $args{value}->isa('Jifty::DBI::Record') ) {
-        $args{value} = $args{value}->id;
+    my $value_ref = ref( $args{value} );
+    if ( $value_ref ) {
+        if ( ( $value_ref ne 'ARRAY' ) && 
+             $args{value}->isa('Jifty::DBI::Record') ) {
+            $args{value} = $args{value}->id;
+        }
+        elsif ( $value_ref eq 'ARRAY' ) {
+            map {$_ = ( ( ref $_ && $_->isa('Jifty::DBI::Record') ) ?
+                        ( $_->id ) : $_ ) } @{$args{value}};
+        }
     }
 
     #since we're changing the search criteria, we need to redo the search
@@ -921,40 +979,27 @@ sub limit {
     if ( $args{'column'} ) {
 
         #If it's a like, we supply the %s around the search term
-        if ( $args{'operator'} =~ /LIKE/i ) {
-            $args{'value'} = $args{'value'};
-        } elsif ( $args{'operator'} =~ /MATCHES/i ) {
+        if ( $args{'operator'} =~ /MATCHES/i ) {
             $args{'value'}    = "%" . $args{'value'} . "%";
-            $args{'operator'} = "LIKE";
         } elsif ( $args{'operator'} =~ /STARTSWITH/i ) {
             $args{'value'}    = $args{'value'} . "%";
-            $args{'operator'} = "LIKE";
         } elsif ( $args{'operator'} =~ /ENDSWITH/i ) {
             $args{'value'}    = "%" . $args{'value'};
-            $args{'operator'} = "LIKE";
         }
+        $args{'operator'} =~ s/(?:MATCHES|ENDSWITH|STARTSWITH)/LIKE/i;
 
         #if we're explicitly told not to to quote the value or
         # we're doing an IS or IS NOT (null), don't quote the operator.
 
         if ( $args{'quote_value'} && $args{'operator'} !~ /IS/i ) {
-            my $tmp = $self->_handle->dbh->quote( $args{'value'} );
-
-            # Accomodate DBI drivers that don't understand UTF8
-            if ( $] >= 5.007 ) {
-                require Encode;
-                if ( Encode::is_utf8( $args{'value'} ) ) {
-                    Encode::_utf8_on($tmp);
-                }
+            if ( $value_ref eq 'ARRAY' ) {
+                map {$_ = $self->_quote_value( $_ )} @{$args{'value'}};
             }
-            $args{'value'} = $tmp;
+            else {
+                $args{'value'} = $self->_quote_value( $args{'value'} );
+            }
         }
     }
-
-    my ( $Clause, $qualified_column );
-
-    #TODO: $args{'value'} should take an array of values and generate
-    # the proper where clause.
 
     #If we're performing a left join, we really want the alias to be the
     #left join criterion.
@@ -989,27 +1034,18 @@ sub limit {
     # Set this to the name of the column and the alias, unless we've been
     # handed a subclause name
 
-    $qualified_column = $args{'alias'} . "." . $args{'column'};
-
-    if ( $args{'subclause'} ) {
-        $Clause = $args{'subclause'};
-    } else {
-        $Clause = $qualified_column;
-    }
-
-    warn "$self->_generic_restriction qualified_column=$qualified_column\n"
-        if ( $self->DEBUG );
-
-    my ($restriction);
+    my $qualified_column = $args{'alias'} . "." . $args{'column'};
+    my $clause_id = $args{'subclause'} || $qualified_column;
 
     # If we're trying to get a leftjoin restriction, lets set
     # $restriction to point htere. otherwise, lets construct normally
 
+    my $restriction;
     if ( $args{'leftjoin'} ) {
-        $restriction = \$self->{'leftjoins'}{ $args{'leftjoin'} }{'criteria'}
-            {"$Clause"};
+        $restriction = $self->{'leftjoins'}{ $args{'leftjoin'} }{'criteria'}
+            { $clause_id } ||= [];
     } else {
-        $restriction = \$self->{'restrictions'}{"$Clause"};
+        $restriction = $self->{'restrictions'}{ $clause_id } ||= [];
     }
 
     # If it's a new value or we're overwriting this sort of restriction,
@@ -1029,26 +1065,29 @@ sub limit {
         }
     }
 
-    my $clause = "($qualified_column $args{'operator'} $args{'value'})";
-
-    # Juju because this should come _AFTER_ the EA
-    my $prefix = "";
-    if ( $self->{_open_parens}{$Clause} ) {
-        $prefix = " ( " x $self->{_open_parens}{$Clause};
-        delete $self->{_open_parens}{$Clause};
+    if ( $value_ref eq 'ARRAY' ) {
+        croak 'Limits with an array ref are only allowed with operator \'IN\' or \'=\''
+            unless $args{'operator'} =~ /^(IN|=)$/i;
+        $args{'value'} = '( '. join(',', @{$args{'value'}}) .' )';
+        $args{'operator'} = 'IN';
     }
 
-    if ((       ( exists $args{'entry_aggregator'} )
-            and ( $args{'entry_aggregator'} || "" ) eq 'none'
-        )
-        or ( !$$restriction )
-        )
-    {
+    my $clause = {
+        column   => $qualified_column,
+        operator => $args{'operator'},
+        value    => $args{'value'},
+    };
 
-        $$restriction = $prefix . $clause;
+    # Juju because this should come _AFTER_ the EA
+    my @prefix;
+    if ( $self->{'_open_parens'}{ $clause_id } ) {
+        @prefix = ('(') x delete $self->{'_open_parens'}{ $clause_id };
+    }
 
+    if ( lc( $args{'entry_aggregator'} || "" ) eq 'none' || !@$restriction ) {
+        @$restriction = (@prefix, $clause);
     } else {
-        $$restriction .= $args{'entry_aggregator'} . $prefix . $clause;
+        push @$restriction, $args{'entry_aggregator'}, @prefix , $clause;
     }
 
     # We're now limited. people can do searches.
@@ -1090,12 +1129,8 @@ arbitrarily complex queries.
 # Immediate Action
 sub close_paren {
     my ( $self, $clause ) = @_;
-    my $restriction = \$self->{'restrictions'}{"$clause"};
-    if ( !$$restriction ) {
-        $$restriction = " ) ";
-    } else {
-        $$restriction .= " ) ";
-    }
+    my $restriction = $self->{'restrictions'}{ $clause } ||= [];
+    push @$restriction, ')';
 }
 
 sub _add_subclause {
@@ -1120,10 +1155,7 @@ sub _where_clause {
     #Go through all restriction types. Build the where clause from the
     #Various subclauses.
 
-    my @subclauses;
-    foreach my $subclause ( sort keys %{ $self->{'subclauses'} } ) {
-        push @subclauses, $self->{'subclauses'}{"$subclause"};
-    }
+    my @subclauses = grep defined && length, values %{ $self->{'subclauses'} };
 
     $where_clause = " WHERE " . CORE::join( ' AND ', @subclauses )
         if (@subclauses);
@@ -1136,18 +1168,25 @@ sub _where_clause {
 
 sub _compile_generic_restrictions {
     my $self = shift;
-    my ($restriction);
 
     delete $self->{'subclauses'}{'generic_restrictions'};
 
-  #Go through all the restrictions of this type. Buld up the generic subclause
-    foreach $restriction ( sort keys %{ $self->{'restrictions'} } ) {
-        if ( defined $self->{'subclauses'}{'generic_restrictions'} ) {
-            $self->{'subclauses'}{'generic_restrictions'} .= " AND ";
+    # Go through all the restrictions of this type. Buld up the generic subclause
+    my $result = '';
+    foreach my $restriction ( grep $_ && @$_, values %{ $self->{'restrictions'} } ) {
+        $result .= ' AND ' if $result;
+        $result .= '(';
+        foreach my $entry ( @$restriction ) {
+            unless ( ref $entry ) {
+                $result .= ' '. $entry . ' ';
+            }
+            else {
+                $result .= join ' ', @{$entry}{qw(column operator value)};
+            }
         }
-        $self->{'subclauses'}{'generic_restrictions'}
-            .= "(" . $self->{'restrictions'}{"$restriction"} . ")";
+        $result .= ')';
     }
+    return ($self->{'subclauses'}{'generic_restrictions'} = $result);
 }
 
 # set $self->{$type .'_clause'} to new value
@@ -1160,6 +1199,24 @@ sub _set_clause {
         $self->redo_search;
     }
     $self->{$type} = $value;
+}
+
+# quote the search value
+sub _quote_value {
+    my $self = shift;
+    my ( $value ) = @_;
+
+    my $tmp = $self->_handle->dbh->quote( $value );
+
+    # Accomodate DBI drivers that don't understand UTF8
+    if ( $] >= 5.007 ) {
+      require Encode;
+      if ( Encode::is_utf8( $tmp ) ) {
+        Encode::_utf8_on($tmp);
+      }
+    }
+    return $tmp;
+
 }
 
 =head2 order_by_cols DEPRECATED
@@ -1781,7 +1838,8 @@ sub clone {
 
     $obj->redo_search();    # clean out the object of data
 
-    $obj->{$_} = Clone::clone( $obj->{$_} ) for ( $self->_cloned_attributes );
+    $obj->{$_} = Clone::clone( $obj->{$_} ) for
+        grep exists $self->{ $_ }, $self->_cloned_attributes;
     return $obj;
 }
 
@@ -1798,7 +1856,7 @@ the list.
 sub _cloned_attributes {
     return qw(
         aliases
-        left_joins
+        leftjoins
         subclauses
         restrictions
     );

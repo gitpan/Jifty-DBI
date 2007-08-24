@@ -114,6 +114,10 @@ sub next {
     return undef unless defined $self->{data}[ $self->{curp} ];
 
     my $cur = $self->{data}[ $self->{curp} ];
+
+    # do the search to avoid the count query and then search
+    $cur->_do_search if $cur->{'must_redo_search'};
+
     if ( $cur->_items_counter == $cur->count ) {
 
         # move to the next element
@@ -207,7 +211,7 @@ sub is_last {
 
 =head2 items_array_ref
 
-Return a refernece to an array containing all objects found by this search.
+Return a reference to an array containing all objects found by this search.
 
 Will destroy any positional state.
 

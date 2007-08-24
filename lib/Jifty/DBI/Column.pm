@@ -8,14 +8,17 @@ use base qw/Class::Accessor::Fast Jifty::DBI::HasFilters/;
 use UNIVERSAL::require;
 use version;
 
-__PACKAGE__->mk_accessors qw/
-    name
+
+
+our @ATTRS = qw/
+name
     type
     default
     readable writable
     max_length
     mandatory
     virtual
+    container
     distinct
     sort_order
     refers_to by
@@ -25,12 +28,15 @@ __PACKAGE__->mk_accessors qw/
 
     label hints render_as
     valid_values
+    available_values
     indexed
     autocompleted
     _validator
     _checked_for_validate_sub
     record_class
     /;
+
+__PACKAGE__->mk_accessors(@ATTRS);
 
 =head1 NAME
 
@@ -73,14 +79,28 @@ Returns true if this column is a text field
 
 sub is_string {
     my $self = shift;
-    if ( $self->type =~ /CHAR/i ){ 
+    if ( $self->type =~ /CHAR|TEXT/i ){ 
         return 1;
     }
     return 0;
 }
 
 
+=head2 serialize_metadata
 
+Returns a hash describing this column object with enough detail to
+fully describe it in the database.  Intentionally skips C<record_class>,
+all column attributes starting with C<_>, and all column attributes
+which are undefined.
+
+=cut
+
+sub serialize_metadata {
+    my $self = shift;
+    return {map { $_ => $self->$_() } grep { $_ ne 'record_class' && $_ !~ /^_/ && defined $self->$_}  @ATTRS};
+
+
+}
 
 =head2 validator
 

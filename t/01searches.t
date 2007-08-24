@@ -8,7 +8,7 @@ use Test::More;
 BEGIN { require "t/utils.pl" }
 our (@available_drivers);
 
-use constant TESTS_PER_DRIVER => 71;
+use constant TESTS_PER_DRIVER => 97;
 
 my $total = scalar(@available_drivers) * TESTS_PER_DRIVER;
 plan tests => $total;
@@ -45,6 +45,7 @@ SKIP: {
         is( $users_obj->last, undef, 'last returns undef on not limited obj' );
         is( $users_obj->is_last, undef, 'is_last returns undef on not limited obj after last' );
         $users_obj->goto_first_item;
+        is( $users_obj->peek, undef, 'peek returns undef on not limited obj' );
         is( $users_obj->next, undef, 'next returns undef on not limited obj' );
         is( $users_obj->is_last, undef, 'is_last returns undef on not limited obj after next' );
         # XXX TODO FIXME: may be this methods should be implemented
@@ -60,6 +61,7 @@ SKIP: {
         isa_ok( $users_obj->first, 'Jifty::DBI::Record', 'first returns record object' );
         isa_ok( $users_obj->last, 'Jifty::DBI::Record', 'last returns record object' );
         $users_obj->goto_first_item;
+        isa_ok( $users_obj->peek, 'Jifty::DBI::Record', 'peek returns record object' );
         isa_ok( $users_obj->next, 'Jifty::DBI::Record', 'next returns record object' );
         $items_ref = $users_obj->items_array_ref;
         isa_ok( $items_ref, 'ARRAY', 'items_array_ref always returns array reference' );
@@ -69,7 +71,7 @@ SKIP: {
         isa_ok( $items_ref, 'ARRAY', 'items_array_ref always returns array reference' );
         is( scalar @{$items_ref}, $count_all, 'items_array_ref returns same number of records as was inserted' );
 
-# try to use $users_obj for all tests, after each call to CleanSlate it should look like new obj.
+# try to use $users_obj for all tests, after each call to clean_slate it should look like new obj.
 # and test $obj->new syntax
         my $clean_obj = $users_obj->new( handle => $handle );
         isa_ok( $clean_obj, 'Jifty::DBI::Collection' );
@@ -91,9 +93,12 @@ SKIP: {
         is( $last_rec, $first_rec, 'last returns same object as first' );
         is( $users_obj->is_last, 1, 'is_last always returns 1 after last call');
         $users_obj->goto_first_item;
+        my $peek_rec = $users_obj->peek;
         my $next_rec = $users_obj->next;
+        is( $next_rec, $peek_rec, 'peek returns same object as next' );
         is( $next_rec, $first_rec, 'next returns same object as first' );
         is( $users_obj->is_last, 1, 'is_last returns 1 after fetch first record with next method');
+        is( $users_obj->peek, undef, 'only one record in the collection' );
         is( $users_obj->next, undef, 'only one record in the collection' );
         TODO: {
                 local $TODO = 'require discussion';
@@ -103,7 +108,7 @@ SKIP: {
         isa_ok( $items_ref, 'ARRAY', 'items_array_ref always returns array reference' );
         is( scalar @{$items_ref}, 1, 'items_array_ref has only 1 record' );
 
-# similar basic limit, but with different operatorS and less first/next/last tests
+# similar basic limit, but with different operators and less first/next/last tests
         # LIKE
         $users_obj->clean_slate;
         is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
@@ -131,6 +136,19 @@ SKIP: {
         isa_ok( $first_rec, 'Jifty::DBI::Record', 'First returns record object' );
         is( $first_rec->login, 'audreyt', 'login is correct' );
 
+        # IN
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'login', operator => 'IN', 
+                           value => ['cubic', 'obra', 'glasser', 'audreyt'] );
+        is( $users_obj->count, 4, "found 4 user ids" );
+        my %logins = (cubic => 1, obra => 1, glasser => 1, audreyt => 1);
+        while ( my $user = $users_obj->next ) {
+          is ( defined $logins{$user->login}, 1, 'Found login' );
+          delete $logins{$user->login};
+        }
+        is ( scalar( keys( %logins ) ), 0, 'All logins found' );
+
         # IS NULL
         # XXX TODO FIXME: column => undef should be handled as NULL
         $users_obj->clean_slate;
@@ -145,11 +163,11 @@ SKIP: {
         # IS NOT NULL
         $users_obj->clean_slate;
         is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
-        $users_obj->limit( column => 'phone', operator => 'IS NOT', value => 'NULL', QOUTEvalue => 0 );
+        $users_obj->limit( column => 'phone', operator => 'IS NOT', value => 'NULL', quotevalue => 0 );
         is( $users_obj->count, $count_all - 2, "found users who have phone number filled" );
         $users_obj->clean_slate;
         is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
-        $users_obj->limit( column => 'address', operator => 'IS NOT', value => 'NULL', QOUTEvalue => 0 );
+        $users_obj->limit( column => 'address', operator => 'IS NOT', value => 'NULL', quotevalue => 0 );
         is( $users_obj->count, $count_all, "found users who have address filled" );
        
         # CASE SENSITIVITY, default is limits are not case sensitive
@@ -161,6 +179,14 @@ SKIP: {
         is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
         $users_obj->limit( column => 'name', value => 'jesse vincent' );
         is( $users_obj->count, 1, "case insensitive, non-matched case, should find one row");
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'name', value => ['Jesse Vincent', 'Audrey Tang'], operator => 'IN');
+        is( $users_obj->count, 2, "case insensitive, matching case, should find two rows");
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'name', value => ['jesse vincent', 'audrey tang'], operator => 'IN');
+        is( $users_obj->count, 2, "case insensitive, non-matched case, should find two rows");
 
         # CASE SENSITIVITY, testing with case_sensitive => 1
         $users_obj->clean_slate;
@@ -170,6 +196,19 @@ SKIP: {
         $users_obj->clean_slate;
         is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
         $users_obj->limit( column => 'name', value => 'jesse vincent', case_sensitive => 1 );
+        TODO: {
+            local $TODO = "MySQL still needs case sensitive fixes" if ( $d eq 'mysql' || $d eq 'mysqlPP' );
+            is( $users_obj->count, 0, "case sensitive search, should find zero rows");
+        }
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'name', value => ['Jesse Vincent', 'Audrey Tang'], operator => 'IN',
+                           case_sensitive => 1 );
+        is( $users_obj->count, 2, "case sensitive search, should find two rows");
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'name', value => ['jesse vincent', 'audrey tang'], operator => 'IN', 
+                           case_sensitive => 1 );
         TODO: {
             local $TODO = "MySQL still needs case sensitive fixes" if ( $d eq 'mysql' || $d eq 'mysqlPP' );
             is( $users_obj->count, 0, "case sensitive search, should find zero rows");
@@ -186,6 +225,38 @@ SKIP: {
         $first_rec = $users_obj->first;
         isa_ok( $first_rec, 'Jifty::DBI::Record', 'First returns record object' );
         is( $first_rec->login, 'obra', 'login is correct' );
+
+        $users_obj->clean_slate;
+        TODO: {
+            local $TODO = 'we leave order_by after clean slate, fixing this results in many RT failures';
+            is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+            $users_obj = TestApp::UserCollection->new( handle => $handle );
+        }
+ 
+# Let's play a little with 'entry_aggregator'
+        # EA defaults to OR for the same field
+        $users_obj->limit( column => 'phone', operator => 'IS', value => 'NULL', quote_value => 0 );
+        $users_obj->limit( column => 'phone', operator => 'LIKE', value => '%X%' );
+        is( $users_obj->count, 4, "found users who has no phone or it has X char" );
+
+        # set AND for the same field
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'Login', operator => 'NOT LIKE', value => '%c%' );
+        $users_obj->limit(
+            entry_aggregator => 'AND', column => 'Login', operator => 'LIKE', value => '%u%'
+        );
+        is( $users_obj->count, 1, "found users who has no phone or it has X char" );
+
+        # default is AND for different fields
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object');
+        $users_obj->limit( column => 'phone', operator => 'IS', value => 'NULL', quote_value => 0 );
+        $users_obj->limit( column => 'login', operator => 'LIKE', value => '%r%' );
+        is( $users_obj->count, 2, "found users who has no phone number or login has 'r' char" );
+
+        $users_obj->clean_slate;
+        is_deeply( $users_obj, $clean_obj, 'after clean_slate looks like new object'); 
 
         cleanup_schema( 'TestApp', $handle );
         disconnect_handle( $handle );
@@ -233,6 +304,21 @@ CREATE table users (
 EOF
 
 }
+
+sub schema_oracle { [
+    "CREATE SEQUENCE Users_seq",
+    "CREATE TABLE Users (
+        id integer CONSTRAINT Users_Key PRIMARY KEY,
+        Login varchar(18) NOT NULL,
+        Name varchar(36),
+        Phone varchar(18)
+    )",
+] }
+
+sub cleanup_schema_oracle { [
+    "DROP SEQUENCE Users_seq",
+    "DROP TABLE Users", 
+] }
 
 
 1;

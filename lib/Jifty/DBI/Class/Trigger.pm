@@ -68,10 +68,10 @@ sub call_trigger {
     $result_store->{'_class_trigger_results'} = [];
 
     if (my @triggers = __fetch_all_triggers($self, $when)) { # any triggers?
-        for (@triggers) {
-              my @return = $_->[0]->($self, @_);
+        for my $trig (@triggers) {
+              my @return = $trig->[0]->($self, @_);
                 push @{$result_store->{'_class_trigger_results'}}, \@return;
-                return undef if ($_->[1] and not $return[0]); # only abort on false values.
+                return undef if ($trig->[1] and not $return[0]); # only abort on false values.
          
     }
     }

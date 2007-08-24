@@ -35,7 +35,7 @@ Jifty::DBI::Record - Superclass for records loaded by Jifty::DBI::Collection
 
 =head1 DESCRIPTION
 
-Jifty::DBI::Record encapuslates records and tables as part of the L<Jifty::DBI>
+Jifty::DBI::Record encapsulates records and tables as part of the L<Jifty::DBI>
 object-relational mapper.
 
 =head1 METHODS
@@ -260,6 +260,7 @@ sub _init_methods_for_column {
                 if ( UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) )
                 {
                     $subref = sub {
+                        if ( @_ > 1 ) { Carp::carp "Value passed to column accessor.  You probably want to use the mutator." }
                         $_[0]->_to_record( $column_name,
                             $_[0]->__value($column_name) );
                     };
@@ -271,7 +272,10 @@ sub _init_methods_for_column {
                 {
                     $subref = sub { $_[0]->_collection_value($column_name) };
                 } else {
-                    $subref = sub { return ( $_[0]->_value($column_name) ) };
+                    $subref = sub {
+                        if ( @_ > 1 ) { Carp::carp "Value passed to column accessor.  You probably want to use the mutator." }
+                        return ( $_[0]->_value($column_name) );
+                    };
                 }
             } else {
                 $subref = sub { return '' }
@@ -514,6 +518,39 @@ sub readable_attributes {
     return @{$self->_READABLE_COLS_CACHE() || $self->_READABLE_COLS_CACHE([sort map { $_->name } grep { $_->readable } $self->columns])};
 }
 
+=head2 serialize_metadata
+
+Returns a hash which describes how this class is stored in the database. 
+Right now, the keys are C<class>, C<table>, and C<columns>. C<class> and C<table>
+return simple scalars, but C<columns> returns a hash of C<name =&gt; value> pairs
+for all the columns in this model. See C<Jifty::DBI::Column/serialize_metadata> for 
+the format of that hash.
+
+
+=cut
+
+sub serialize_metadata {
+    my $self = shift;
+    return {
+            class => (ref($self) || $self),
+            table => $self->table,
+            columns => { $self->_serialize_columns },
+    }
+}
+
+sub _serialize_columns {
+    my $self = shift;
+    my %serialized_columns;
+    foreach my $column ( $self->columns  ) {
+        $serialized_columns{ $column->name } = $column->serialize_metadata();
+    }
+
+    return %serialized_columns;
+}
+
+
+
+
 =head2 writable_attributes
 
 Returns a list of this table's writable columns
@@ -669,7 +706,7 @@ sub __value {
 
 =head2 as_hash 
 
-Returns a version of this object's readable columns rendered as a hash of key => value pairs
+Returns a version of this record's readable columns rendered as a hash of key => value pairs
 
 =cut
 
