@@ -20,7 +20,6 @@ inc/Module/Install/Metadata.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/Jifty/DBI.pm
-lib/Jifty/DBI/Class/Trigger.pm
 lib/Jifty/DBI/Collection.pm
 lib/Jifty/DBI/Collection/Union.pm
 lib/Jifty/DBI/Collection/Unique.pm
@@ -82,6 +81,9 @@ t/14handle-pg.t
 t/15types.t
 t/16inheritance.t
 t/17virtualtypes.t
+t/18triggers.t
+t/case_sensitivity.t
+t/metadata.t
 t/pod-coverage.t
 t/pod.t
 t/testmodels.pl

@@ -32,7 +32,7 @@ SKIP: {
 
         
         my $emp = TestApp::Employee->new( handle => $handle );
-        my $e_id = $emp->create( Name => 'RUZ' );
+        my $e_id = $emp->create( name => 'RUZ' );
         ok($e_id, "Got an id for the new employee: $e_id");
         $emp->load($e_id);
         is($emp->id, $e_id);
@@ -55,13 +55,12 @@ SKIP: {
         }
 
         my $emp2 = TestApp::Employee->new( handle => $handle );
-        my $e2_id = $emp2->create( Name => 'JESSE' );
+        my $e2_id = $emp2->create( name => 'JESSE' );
         my $phone2 = TestApp::Phone->new( handle => $handle );
         my $p2_id = $phone2->create( employee => $e2_id, phone => '+16173185823');
 
         for (3..6){
         my $i = $_;
-        diag("loading phone $i");
         my $phone = TestApp::Phone->new( handle => $handle );
         isa_ok( $phone, 'TestApp::Phone');
         my $p_id = $phone->create( employee => $e_id, phone => "+1 $i");

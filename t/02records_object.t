@@ -31,7 +31,7 @@ SKIP: {
         isa_ok($ret,'DBI::st', "Inserted the schema. got a statement handle back" );}
 
         my $emp = TestApp::Employee->new( handle => $handle );
-        my $e_id = $emp->create( Name => 'RUZ' );
+        my $e_id = $emp->create( name => 'RUZ' );
         ok($e_id, "Got an id for the new emplyee");
         my $phone = TestApp::Phone->new( handle => $handle );
         isa_ok( $phone, 'TestApp::Phone', "it's a TestApp::Phone");
@@ -40,7 +40,7 @@ SKIP: {
         is($p_id, 1, "Loaded record $p_id");
         $phone->load( $p_id );
 
-        my $obj = $phone->employee( handle => $handle );
+        my $obj = $phone->employee();
         ok($obj, "Employee #$e_id has phone #$p_id");
         isa_ok( $obj, 'TestApp::Employee');
         is($obj->id, $e_id);
@@ -106,7 +106,7 @@ sub schema_oracle { [
     "CREATE SEQUENCE employees_seq",
     "CREATE TABLE employees (
         id integer CONSTRAINT employees_key PRIMARY KEY,
-        Name varchar(36)
+        name varchar(36)
     )",
     "CREATE SEQUENCE phones_seq",
     "CREATE TABLE phones (

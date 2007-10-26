@@ -196,7 +196,6 @@ sub _do_search {
     my $self = shift;
 
     my $query_string = $self->build_select_query();
-
     # If we're about to redo the search, we need an empty set of items
     delete $self->{'items'};
 
@@ -399,7 +398,26 @@ sub _is_joined {
     } else {
         return ( @{ $self->{'aliases'} } );
     }
+}
 
+=head2 _is_distinctly_joined
+
+Returns true if this collection is joining multiple table, but is
+joining other table's distinct fields, hence resulting in distinct
+resultsets.  The behaviour is undefined if called on a non-joining
+collection.
+
+=cut
+
+sub _is_distinctly_joined {
+    my $self = shift;
+    if ( $self->{'leftjoins'} ) {
+	for (values %{ $self->{'leftjoins'} } ) {
+	    return 0 unless $_->{is_distinct};
+	}
+
+	return 1;
+    }
 }
 
 # LIMIT clauses are used for restricting ourselves to subsets of the
@@ -603,7 +621,7 @@ joining this table to something that is not the other table's primary key"
 
 sub distinct_required {
     my $self = shift;
-    return( $self->_is_joined ? 1 : 0 );
+    return( $self->_is_joined ? !$self->_is_distinctly_joined : 0 );
 }
 
 =head2 build_select_count_query
@@ -810,8 +828,7 @@ sub record_class {
             if ref $self->{record_class};
     } elsif ( not $self->{record_class} ) {
         my $class = ref($self);
-        $class =~ s/Collection$//
-            or die "Can't guess record class from $class";
+         $class =~ s/(Collection|s)$// || die "Can't guess record class from $class";
         $self->{record_class} = $class;
     }
     return $self->{record_class};
@@ -954,20 +971,18 @@ sub limit {
         @_    # get the real argumentlist
     );
 
-    # We need to be passed a column and a value, at very least
-    croak "Must provide a column to limit"
-        unless defined $args{column};
-    croak "Must provide a value to limit to"
-        unless defined $args{value};
+
 
     # make passing in an object DTRT
     my $value_ref = ref( $args{value} );
     if ( $value_ref ) {
-        if ( ( $value_ref ne 'ARRAY' ) && 
-             $args{value}->isa('Jifty::DBI::Record') ) {
+        if ( ( $value_ref ne 'ARRAY' ) 
+                && $args{value}->isa('Jifty::DBI::Record') ) {
             $args{value} = $args{value}->id;
         }
         elsif ( $value_ref eq 'ARRAY' ) {
+            # Don't modify the original reference, it isn't polite
+            $args{value} = [ @{$args{value}} ];
             map {$_ = ( ( ref $_ && $_->isa('Jifty::DBI::Record') ) ?
                         ( $_->id ) : $_ ) } @{$args{value}};
         }
@@ -1012,7 +1027,7 @@ sub limit {
 
     # {{{ if there's no alias set, we need to set it
 
-    unless ( $args{'alias'} ) {
+    unless (defined  $args{'alias'} ) {
 
         #if the table we're looking at is the same as the main table
         if ( $args{'table'} eq $self->table ) {
@@ -1034,7 +1049,7 @@ sub limit {
     # Set this to the name of the column and the alias, unless we've been
     # handed a subclause name
 
-    my $qualified_column = $args{'alias'} . "." . $args{'column'};
+    my $qualified_column = $args{'alias'} ? $args{'alias'} . "." . $args{'column'} : $args{'column'};
     my $clause_id = $args{'subclause'} || $qualified_column;
 
     # If we're trying to get a leftjoin restriction, lets set
@@ -1050,14 +1065,17 @@ sub limit {
 
     # If it's a new value or we're overwriting this sort of restriction,
 
+    # XXX: when is column_obj undefined?
+    my $column_obj = $self->new_item()->column( $args{column} );
+    my $case_sensitive = $column_obj ? $column_obj->case_sensitive : 0;
+    $case_sensitive = $args{'case_sensitive'} if defined $args{'case_sensitive'};
     if (   $self->_handle->case_sensitive
         && defined $args{'value'}
         && $args{'quote_value'}
-        && !$args{'case_sensitive'} )
+        && !$case_sensitive )
     {
 
         # don't worry about case for numeric columns_in_db
-        my $column_obj = $self->new_item()->column( $args{column} );
         if ( defined $column_obj ? $column_obj->is_string : 1 ) {
             ( $qualified_column, $args{'operator'}, $args{'value'} )
                 = $self->_handle->_make_clause_case_insensitive(

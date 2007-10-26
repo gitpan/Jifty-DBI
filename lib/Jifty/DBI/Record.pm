@@ -8,7 +8,7 @@ use Lingua::EN::Inflect ();
 use Jifty::DBI::Column  ();
 use UNIVERSAL::require  ();
 use Scalar::Util      qw(blessed);
-use Jifty::DBI::Class::Trigger; # exports by default
+use Class::Trigger; # exports by default
 
 
 use base qw/
@@ -23,6 +23,7 @@ Jifty::DBI::Record->mk_classdata(qw/TABLE_NAME/ );
 Jifty::DBI::Record->mk_classdata(qw/_READABLE_COLS_CACHE/);
 Jifty::DBI::Record->mk_classdata(qw/_WRITABLE_COLS_CACHE/);
 Jifty::DBI::Record->mk_classdata(qw/_COLUMNS_CACHE/ );
+Jifty::DBI::Record->mk_classdata(qw/RECORD_MIXINS/);
 
 =head1 NAME
 
@@ -425,7 +426,7 @@ sub _prefetched_collection {
 sub add_column {
     my $self = shift;
     my $name = shift;
-    $name = lc $name;
+    #$name = lc $name;
     
     $self->COLUMNS->{$name} = Jifty::DBI::Column->new()
     unless exists $self->COLUMNS->{$name};
@@ -450,7 +451,7 @@ Returns the $value of a $column.
 
 sub column {
     my $self = shift;
-    my $name = lc( shift || '' );
+    my $name = ( shift || '' );
     my $col = $self->_columns_hashref;
     return undef unless $col && exists $col->{$name};
     return $col->{$name};
@@ -611,6 +612,10 @@ not just a value.
 
 If before_set_I<column_name> returns false, the new value isn't set.
 
+=item before_set PARAMHASH
+
+This is identical to the C<before_set_I<column_name>>, but is called for every column set.
+
 =item after_set_I<column_name> PARAMHASH
 
 This hook will be called after a value is successfully set in the
@@ -619,6 +624,10 @@ contains C<column> and C<value> keys. If C<value> was a SQL function,
 it will now contain the actual value that was set.
 
 This hook's return value is ignored.
+
+=item after_set PARAMHASH
+
+This is identical to the C<after_set_I<column_name>>, but is called for every column set.
 
 =item validate_I<column_name> VALUE
 
@@ -663,7 +672,7 @@ never override __value.
 sub __value {
     my $self        = shift;
 
-    my $column_name = lc(shift);
+    my $column_name = shift;
     # If the requested column is actually an alias for another, resolve it.
     my $column = $self->column($column_name);
     if  ($column   and defined $column->alias_for_column ) {
@@ -672,6 +681,7 @@ sub __value {
     }
 
     return unless ($column);
+
 
     # In the default case of "yeah, we have a value", return it as
     # fast as we can.
@@ -688,8 +698,6 @@ sub __value {
             . " WHERE $pkey = ?";
         my $sth = $self->_handle->simple_query( $query_string, $id );
         my ($value) = eval { $sth->fetchrow_array() };
-        warn $@ if $@;
-
         $self->{'values'}{ $column_name }  = $value;
         $self->{'fetched'}{ $column_name } = 1;
     }
@@ -736,18 +744,37 @@ sub _set {
         @_
     );
 
+    # Call the general before_set triggers
+    my $ok = $self->_run_callback(
+        name => "before_set",
+        args => \%args,
+    );
+    return $ok if( not defined $ok);
 
-    my $ok = $self->_run_callback( name => "before_set_" . $args{column},
-                           args => \%args);
+    # Call the specific before_set_column triggers
+    $ok = $self->_run_callback(
+        name => "before_set_" . $args{column},
+        args => \%args,
+    );
     return $ok if( not defined $ok);
 
     $ok = $self->__set(%args);
     return $ok if not $ok;
 
-        # Fetch the value back to make sure we have the actual value
-        my $value = $self->_value($args{column});
-        my $after_set_ret = $self->_run_callback( name => "after_set_" . $args{column}, args => 
-        {column => $args{column}, value => $value});
+    # Fetch the value back to make sure we have the actual value
+    my $value = $self->_value($args{column});
+
+    # Call the general after_set triggers
+    $self->_run_callback( 
+        name => "after_set",
+        args => { column => $args{column}, value => $value },
+    );
+
+    # Call the specific after_set_column triggers
+    $self->_run_callback( 
+        name => "after_set_" . $args{column}, 
+        args => { column => $args{column}, value => $value },
+    );
 
     return $ok;
 }
@@ -761,6 +788,7 @@ sub __set {
         'is_sql_function' => undef,
         @_
     );
+
 
     my $ret = Class::ReturnValue->new();
 
@@ -787,17 +815,11 @@ sub __set {
     if ( $self->{'fetched'}{ $column->name }
         || !$self->{'decoded'}{ $column->name } )
     {
-        if ((      !defined $args{'value'}
-                && !defined $self->{'values'}{ $column->name }
-            )
-            || (   defined $args{'value'}
-                && defined $self->{'values'}{ $column->name }
-
+        if ((      !defined $args{'value'} && !defined $self->{'values'}{ $column->name })
+            || (   defined $args{'value'} && defined $self->{'values'}{ $column->name } 
                 # XXX: This is a bloody hack to stringify DateTime
                 # and other objects for compares
-                && $args{value}
-                . "" eq ""
-                . $self->{'values'}{ $column->name }
+                && $args{value} . "" eq "" . $self->{'values'}{ $column->name }
             )
             )
         {
@@ -805,6 +827,8 @@ sub __set {
             return ( $ret->return_value );
         }
     }
+
+
 
     if ( my $sub = $column->validator ) {
         my ( $ok, $msg ) = $sub->( $self, $args{'value'} );
@@ -915,10 +939,15 @@ sub load_by_cols {
             my $op;
             my $value;
             my $function = "?";
+            my $column_obj = $self->column( $key );
+            Carp::confess("Unknown column '$key' in class '".ref($self)."'") if !defined $column_obj;
+            my $case_sensitive = $column_obj->case_sensitive;
             if ( ref $hash{$key} eq 'HASH' ) {
                 $op       = $hash{$key}->{operator};
                 $value    = $hash{$key}->{value};
                 $function = $hash{$key}->{function} || "?";
+                $case_sensitive = $hash{$key}->{case_sensitive}
+                    if exists $hash{$key}->{case_sensitive};
             } else {
                 $op    = '=';
                 $value = $hash{$key};
@@ -929,6 +958,13 @@ sub load_by_cols {
                 $value = $value->id;
             }
 
+            # if the handle is in a case_sensitive world and we need to make
+            # a case-insensitive query
+            if ( $self->_handle->case_sensitive && $value ) {
+                if ( $column_obj->is_string && !$case_sensitive ) {
+                    ( $key, $op, $function ) = $self->_handle->_make_clause_case_insensitive( $key, $op, $function );
+        	}
+            }
 
             push @phrases, "$key $op $function";
             push @bind,    $value;
@@ -992,12 +1028,15 @@ sub load_from_hash {
             $self = $class->new( handle => (delete $hashref->{'_handle'} || undef));
     }
     
+    $self->{values} = {};
+    #foreach my $f ( keys %$hashref ) { $self->{'fetched'}{  $f } = 1; }
+    foreach my $col (map {$_->name} $self->columns) {
+        next unless exists $hashref->{lc($col)};
+        $self->{'fetched'}{$col} = 1;
+        $self->{'values'}->{$col} = $hashref->{lc($col)};
 
-    foreach my $f ( keys %$hashref ) {
-        $self->{'fetched'}{ lc $f } = 1;
-    }
-
-    $self->{'values'}  = $hashref;
+        }
+        #$self->{'values'}  = $hashref;
     $self->{'decoded'} = {};
     return $self->id();
 }
@@ -1019,9 +1058,16 @@ sub _load_from_sql {
 
     return ( 0, "Couldn't execute query" ) unless $sth;
 
-    $self->{'values'}  = $sth->fetchrow_hashref;
+   my $hashref  = $sth->fetchrow_hashref;
+    delete $self->{values} ;
     $self->{'fetched'} = {};
     $self->{'decoded'} = {};
+    #foreach my $f ( keys %$hashref ) { $self->{'fetched'}{  $f } = 1; }
+    foreach my $col (map {$_->name} $self->columns) {
+        next unless exists $hashref->{lc($col)};
+        $self->{'fetched'}{$col} = 1;
+        $self->{'values'}->{$col} = $hashref->{lc($col)};
+    }
     if ( !$self->{'values'} && $sth->err ) {
         return ( 0, "Couldn't fetch row: " . $sth->err );
     }
@@ -1038,7 +1084,7 @@ sub _load_from_sql {
     }
 
     foreach my $f ( keys %{ $self->{'values'} } ) {
-        $self->{'fetched'}{ lc $f } = 1;
+        $self->{'fetched'}{ $f } = 1;
     }
     return ( 1, "Found object" );
 
@@ -1056,6 +1102,8 @@ This method calls two hooks in your subclass:
 
 =item before_create
 
+When adding the C<before_create> trigger, you can determine whether the trigger may cause an abort or not by passing the C<abortable> parameter to the C<add_trigger> method. If this is not set, then the return value is ignored regardless.
+
   sub before_create {
       my $self = shift;
       my $args = shift;
@@ -1070,9 +1118,11 @@ This method calls two hooks in your subclass:
 This method is called before trying to create our row in the
 database. It's handed a reference to your paramhash. (That means it
 can modify your parameters on the fly).  C<before_create> returns a
-true or false value. If it returns false, the create is aborted.
+true or false value. If it returns C<undef> and the trigger has been added as C<abortable>, the create is aborted.
 
 =item after_create
+
+When adding the C<after_create> trigger, you can determine whether the trigger may cause an abort or not by passing the C<abortable> parameter to the C<add_trigger> method. If this is not set, then the return value is ignored regardless.
 
   sub after_create {
       my $self                    = shift;
@@ -1083,12 +1133,15 @@ true or false value. If it returns false, the create is aborted.
 
       # Do whatever needs to be done here
 
-      return; # return value is ignored
+      return;   # aborts the create, possibly preventing a load
+      return 1; # continue normally
   }
 
 This method is called after attempting to insert the record into the
 database. It gets handed a reference to the return value of the
-insert. That'll either be a true value or a L<Class::ReturnValue>
+insert. That'll either be a true value or a L<Class::ReturnValue>.
+
+Aborting the trigger merely causes C<create> to return a false (undefined) value even thought he create may have succeeded. This prevents the loading of the record that would normally be returned.
 
 =back
 
@@ -1171,9 +1224,14 @@ sub __create {
         if (not defined $attribs{$column->name} and defined $column->default and not ref $column->default) {
             $attribs{$column->name} = $column->default;
         }
+
         if (not defined $attribs{$column->name} and $column->mandatory and $column->type ne "serial" ) {
             # Enforce "mandatory"
             Carp::carp "Did not supply value for mandatory column ".$column->name;
+            unless ($column->active) {
+                Carp::carp "The mandatory column ".$column->name." is no longer active. This is likely to cause problems!";
+            }
+
             return ( 0 );
         }
     }

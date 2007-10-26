@@ -77,7 +77,6 @@ SKIP: {
         my ($val, $msg) = $rec->set_name('Obra');
         ok($val, $msg) ;
         is($rec->name, 'Obra', "We did actually change the name");
-
 # Validate immutability of the column id
         ($val, $msg) = $rec->set_id( $rec->id + 1 );
         ok(!$val, $msg);
@@ -140,7 +139,6 @@ SKIP: {
         ($val, $msg) = $newrec->_load_from_sql('SELECT id FROM addresses WHERE id = ?', 0);
         is($val, 0, "didn't find object");
         is($msg, "Couldn't find row", "reason is wrong id");
-
 # _load_from_sql and wrong SQL
         $newrec = TestApp::Address->new( handle => $handle );
         {
@@ -282,9 +280,9 @@ sub schema_oracle { [
     "CREATE SEQUENCE addresses_seq",
     "CREATE TABLE addresses (
         id integer CONSTRAINT address_key PRIMARY KEY,
-        Name varchar(36),
-        Phone varchar(18),
-        EmployeeId integer
+        name varchar(36),
+        phone varchar(18),
+        employee_id integer
     )",
 ] }
 

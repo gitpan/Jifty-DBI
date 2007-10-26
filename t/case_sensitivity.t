@@ -11,6 +11,8 @@ use constant TESTS_PER_DRIVER => 9;
 my $total = scalar(@available_drivers) * TESTS_PER_DRIVER;
 plan tests => $total;
 
+use DateTime ();
+
 foreach my $d ( @available_drivers ) {
 SKIP: {
         unless( has_schema( 'TestApp::User', $d ) ) {
@@ -31,14 +33,30 @@ SKIP: {
         my $rec = TestApp::User->new( handle => $handle );
         isa_ok($rec, 'Jifty::DBI::Record');
 
-        my ($id) = $rec->create( location_x => 10, location_y => 20 );
+        my ($id) = $rec->create( name => 'Foobar', interests => 'Slacking' );
         ok($id, "Successfuly created ticket");
-        ok($rec->load($id), "Loaded the record");
-        is($rec->id, $id, "The record has its id");
-        is($rec->location_x, 10);
-        is($rec->location_y, 20);
-        is_deeply($rec->location, { x => 10, y => 20});
+
+	$rec->load_by_cols( name => 'foobar');
+    TODO: {
+        local $TODO = "How do we force mysql to be case sensitive?" if ( $d eq 'mysql' || $d eq 'mysqlPP' );
+        is($rec->id, undef);
     }
+
+	$rec->load_by_cols( name => { value => 'foobar', case_sensitive => 0, operator => '=' });
+	is($rec->id, $id);
+
+	$rec->load_by_cols( name => 'Foobar');
+	is($rec->id, $id);
+
+	$rec->load_by_cols( interests => 'slacking');
+	is($rec->id, $id);;
+
+	$rec->load_by_cols( interests => 'Slacking');
+	is($rec->id, $id);;
+
+        cleanup_schema( 'TestApp', $handle );
+        disconnect_handle( $handle );
+}
 }
 
 package TestApp::User;
@@ -51,8 +69,8 @@ sub schema_sqlite {
 <<EOF;
 CREATE table users (
         id integer primary key,
-        location_x double,
-        location_y double
+        name varchar,
+        interests varchar
 )
 EOF
 
@@ -63,8 +81,8 @@ sub schema_mysql {
 <<EOF;
 CREATE TEMPORARY table users (
         id integer auto_increment primary key,
-        location_x double,
-        location_y double
+        name varchar(255),
+        interests varchar(255)
 )
 EOF
 
@@ -75,43 +93,18 @@ sub schema_pg {
 <<EOF;
 CREATE TEMPORARY table users (
         id serial primary key,
-        location_x double precision,
-        location_y double precision
+        name varchar,
+        interests varchar
 )
 EOF
 
 }
 
-
-sub geolocation {
-    my ($column, $from) = @_;
-    my $name = $column->name;
-    $column->virtual(1);
-    for (qw(x y)) {
-        Jifty::DBI::Schema::_init_column_for(
-            Jifty::DBI::Column->new({ type => 'double',
-                                      name => $name."_$_",
-                                      writable => $column->writable,
-                                      readable => $column->readable }),
-            $from);
-    }
-    no strict 'refs';
-    *{$from.'::'.$name} = sub { return { map { my $method = "${name}_$_"; $_ => $_[0]->$method } qw(x y) } };
-    *{$from.'::'.'set_'.$name} = sub { die "not yet" };
-}
-
-BEGIN {
-
 use Jifty::DBI::Schema;
-Jifty::DBI::Schema->register_types(
-    GeoLocation =>
-        sub { _init_handler is \&geolocation },
-);
-}
-
 
 use Jifty::DBI::Record schema {
-    column location    => is GeoLocation;
+    column name      => type is 'varchar', label is 'Name', is case_sensitive;
+    column interests => type is 'varchar';
 };
 
 
