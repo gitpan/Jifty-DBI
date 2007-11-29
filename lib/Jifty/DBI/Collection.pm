@@ -11,7 +11,7 @@ perl objects
 =head1 SYNOPSIS
 
   use Jifty::DBI::Collection;
-  
+
   package My::ThingCollection;
   use base qw/Jifty::DBI::Collection/;
 
@@ -20,7 +20,7 @@ perl objects
   use Jifty::DBI::Record schema {
     column column_1 => type is 'text';
   };
-  
+
   package main;
 
   use Jifty::DBI::Handle;
@@ -1130,6 +1130,12 @@ should be an array reference of values.
 
 =back
 
+=item escape
+
+If you need to escape wildcard characters (usually _ or %) in the value *explicitly* with 
+"ESCAPE", set the  escape character here. Note that backslashes may require special treatment 
+(e.g. Postgres dislikes \ or \\ in queries unless we use the E'' syntax).
+
 =item entry_aggregator 
 
 Can be AND or OR (or anything else valid to aggregate two clauses in SQL)
@@ -1155,6 +1161,7 @@ sub limit {
         entry_aggregator => 'or',
         case_sensitive   => undef,
         operator         => '=',
+        escape           => undef,
         subclause        => undef,
         leftjoin         => undef,
         @_    # get the real argumentlist
@@ -1208,6 +1215,10 @@ sub limit {
                 $args{'value'} = $self->_quote_value( $args{'value'} );
             }
         }
+    }
+
+    if ( $args{'escape'} ) {
+        $args{'escape'} = 'ESCAPE ' . $self->_quote_value( $args{escape} );
     }
 
     #If we're performing a left join, we really want the alias to be the
@@ -1297,6 +1308,7 @@ sub limit {
         column   => $qualified_column,
         operator => $args{'operator'},
         value    => $args{'value'},
+        escape   => $args{'escape'},
     };
 
     # Juju because this should come _AFTER_ the EA
@@ -1404,7 +1416,7 @@ sub _compile_generic_restrictions {
             unless ( ref $entry ) {
                 $result .= ' ' . $entry . ' ';
             } else {
-                $result .= join ' ', @{$entry}{qw(column operator value)};
+                $result .= join ' ', grep { defined } @{$entry}{qw(column operator value escape)};
             }
         }
         $result .= ')';

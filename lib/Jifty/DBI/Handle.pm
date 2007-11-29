@@ -194,6 +194,9 @@ sub build_dsn {
     my $driver = delete $args{'driver'};
     $args{'dbname'} ||= delete $args{'database'};
 
+    delete $args{'user'};
+    delete $args{'password'};
+
     $self->{'dsn'} = "dbi:$driver:"
         . CORE::join( ';',
         map { $_ . "=" . $args{$_} } grep { defined $args{$_} } keys %args );
@@ -252,7 +255,31 @@ sub log_sql_statements {
     return ( $self->{'_dologsql'} );
 }
 
-=head2 _log_sql_statement STATEMENT DURATION
+=head2 log_sql_hook NAME [, CODE]
+
+Used in instrumenting the SQL logging. You can use this to, for example, get a
+stack trace for each query (so you can find out where the query is being made).
+The name is required so that multiple hooks can be installed without stepping
+on eachother's toes.
+
+The coderef is run in scalar context and (currently) receives no arguments.
+
+If you don't pass CODE in, then the coderef currently assigned under
+NAME is returned.
+
+=cut
+
+sub log_sql_hook {
+    my $self = shift;
+    my $name = shift;
+
+    if (@_) {
+        $self->{'_logsqlhooks'}{$name} = shift;
+    }
+    return ( $self->{'_logsqlhooks'}{$name} );
+}
+
+=head2 _log_sql_statement STATEMENT DURATION BINDINGS
 
 add an SQL statement to our query log
 
@@ -263,8 +290,14 @@ sub _log_sql_statement {
     my $statement = shift;
     my $duration  = shift;
     my @bind      = @_;
+
+    my $results = {};
+    while (my ($name, $code) = each %{ $self->{'_logsqlhooks'} || {} }) {
+        $results->{$name} = $code->();
+    }
+
     push @{ $self->{'StatementLog'} },
-        ( [ Time::HiRes::time(), $statement, [@bind], $duration ] );
+        ( [ Time::HiRes::time(), $statement, [@bind], $duration, $results ] );
 
 }
 
@@ -281,9 +314,12 @@ sub clear_sql_statement_log {
 
 =head2 sql_statement_log
 
-Returns the current SQL statement log as an array of arrays. Each entry is a list of 
+Returns the current SQL statement log as an array of arrays. Each entry is a list of:
 
-(Time, Statement, [Bindings], Duration)
+(Time, Statement, [Bindings], Duration, {HookResults})
+
+Bindings is an arrayref of the values of any placeholders. HookResults is a
+hashref keyed by hook name.
 
 =cut
 
@@ -849,34 +885,24 @@ sub join {
     }
 
     if ( $args{'alias2'} ) {
-        if ( $args{'collection'}{'joins'}{ $args{alias2} } ) {
+        if ( $args{'collection'}{'joins'}{ $args{alias2} } and lc $args{'collection'}{'joins'}{ $args{alias2} }{type} eq "cross" ) {
             my $join = $args{'collection'}{'joins'}{ $args{alias2} };
-            if ( lc $join->{type} eq 'cross' ) {
-                $args{'table2'} = $join->{table};
-                $alias = $join->{alias};
-            } else {
-                warn "Already joined?";
-                return;
-            }
+            $args{'table2'} = $join->{table};
+            $alias = $join->{alias};
         } else {
 
             # if we can't do that, can we reverse the join and have it work?
-            @args{qw/alias1 alias2/}   = @args{qw/alias2 $alias2/};
+            @args{qw/alias1 alias2/}   = @args{qw/alias2 alias1/};
             @args{qw/column1 column2/} = @args{qw/column2 column1/};
 
-            if ( $args{'collection'}{'joins'}{ $args{alias2} } ) {
+            if ( $args{'collection'}{'joins'}{ $args{alias2} } and lc $args{'collection'}{'joins'}{ $args{alias2} }{type} eq "cross" ) {
                 my $join = $args{'collection'}{'joins'}{ $args{alias2} };
-                if ( lc $join->{type} eq 'cross' ) {
-                    $args{'table2'} = $join->{table};
-                    $alias = $join->{alias};
-                } else {
-                    warn "Already joined?";
-                    return;
-                }
+                $args{'table2'} = $join->{table};
+                $alias = $join->{alias};
             } else {
 
                 # Swap back
-                @args{qw/alias1 alias2/}   = @args{qw/alias2 $alias2/};
+                @args{qw/alias1 alias2/}   = @args{qw/alias2 alias1/};
                 @args{qw/column1 column2/} = @args{qw/column2 column1/};
 
                 return $self->Jifty::DBI::Collection::limit(
