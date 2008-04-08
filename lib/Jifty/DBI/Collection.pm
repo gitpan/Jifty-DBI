@@ -2,6 +2,14 @@ package Jifty::DBI::Collection;
 
 use warnings;
 use strict;
+use Scalar::Defer qw/lazy/;
+use Scalar::Util qw/weaken/;
+use overload (
+    '@{}'       => \&items_array_ref,
+    '<>'        => \&next,
+    bool        => sub {shift},
+    fallback    => 1
+);
 
 =head1 NAME
 
@@ -349,7 +357,7 @@ only C<< $self->rows_per_page >> rows, skipping C<< $self->first_row >>
 rows.  (That is, if rows are numbered starting from 0, row number
 C<< $self->first_row >> will be the first row returned.)  Note that it
 probably makes no sense to set these variables unless you are also
-enforcing an ordering on the rows (with L</order_by_cols>, say).
+enforcing an ordering on the rows (with L</order_by>, say).
 
 =cut
 
@@ -762,11 +770,11 @@ sub resolve_join {
                 = $classname->new( $self->_new_collection_args )->new_item;
             my $right_alias = $self->new_alias($item);
             $self->join(
-                type    => 'left',
-                alias1  => $last_alias,
-                column1 => 'id',
-                alias2  => $right_alias,
-                column2 => $column->by || 'id',
+                type        => 'left',
+                alias1      => $last_alias,
+                column1     => 'id',
+                alias2      => $right_alias,
+                column2     => $column->by || 'id',
                 is_distinct => 1,
             );
             $last_alias = $right_alias;
@@ -774,11 +782,11 @@ sub resolve_join {
             my $item        = $classname->new( $self->_new_record_args );
             my $right_alias = $self->new_alias($item);
             $self->join(
-                type    => 'left',
-                alias1  => $last_alias,
-                column1 => $name,
-                alias2  => $right_alias,
-                column2 => $column->by || 'id',
+                type        => 'left',
+                alias1      => $last_alias,
+                column1     => $name,
+                alias2      => $right_alias,
+                column2     => $column->by || 'id',
                 is_distinct => 1,
             );
             $last_alias = $right_alias;
@@ -851,7 +859,7 @@ on your database, call C<do_search> before that C<count>.
 
 sub do_search {
     my $self = shift;
-    return              if $self->derived;
+    return if $self->derived;
     $self->_do_search() if $self->{'must_redo_search'};
 
 }
@@ -863,6 +871,13 @@ sub new_item.  When the complete set has been iterated through,
 returns undef and resets the search such that the following call to
 L</next> will start over with the first item retrieved from the
 database.
+
+You may also call this method via the built-in iterator syntax.
+The two lines below are equivalent:
+
+    while ($_ = $collection->next) { ... }
+
+    while (<$collection>) { ... }
 
 =cut
 
@@ -956,6 +971,13 @@ sub last {
 
 Return a reference to an array containing all objects found by this
 search.
+
+You may also call this method via the built-in array dereference syntax.
+The two lines below are equivalent:
+
+    for (@{$collection->items_array_ref}) { ... }
+
+    for (@$collection) { ... }
 
 =cut
 
@@ -1115,11 +1137,11 @@ database supports are also valid.
 
 MATCHES is like LIKE, except it surrounds the value with % signs.
 
-=item "STARTSWITH"
+=item "starts_with"
 
-STARTSWITH is like LIKE, except it only appends a % at the end of the string
+starts_with is like LIKE, except it only appends a % at the end of the string
 
-=item "ENDSWITH"
+=item "ends_with"
 
 ENDSWITH is like LIKE, except it prepends a % to the beginning of the string
 
@@ -1169,58 +1191,6 @@ sub limit {
 
     return if $self->derived;
 
-    # make passing in an object DTRT
-    my $value_ref = ref( $args{value} );
-    if ($value_ref) {
-        if ( ( $value_ref ne 'ARRAY' )
-            && $args{value}->isa('Jifty::DBI::Record') )
-        {
-            $args{value} = $args{value}->id;
-        } elsif ( $value_ref eq 'ARRAY' ) {
-
-            # Don't modify the original reference, it isn't polite
-            $args{value} = [ @{ $args{value} } ];
-            map {
-                $_ = (
-                      ( ref $_ && $_->isa('Jifty::DBI::Record') )
-                    ? ( $_->id )
-                    : $_
-                    )
-            } @{ $args{value} };
-        }
-    }
-
-    #since we're changing the search criteria, we need to redo the search
-    $self->redo_search();
-
-    if ( $args{'column'} ) {
-
-        #If it's a like, we supply the %s around the search term
-        if ( $args{'operator'} =~ /MATCHES/i ) {
-            $args{'value'} = "%" . $args{'value'} . "%";
-        } elsif ( $args{'operator'} =~ /STARTSWITH/i ) {
-            $args{'value'} = $args{'value'} . "%";
-        } elsif ( $args{'operator'} =~ /ENDSWITH/i ) {
-            $args{'value'} = "%" . $args{'value'};
-        }
-        $args{'operator'} =~ s/(?:MATCHES|ENDSWITH|STARTSWITH)/LIKE/i;
-
-        #if we're explicitly told not to to quote the value or
-        # we're doing an IS or IS NOT (null), don't quote the operator.
-
-        if ( $args{'quote_value'} && $args{'operator'} !~ /IS/i ) {
-            if ( $value_ref eq 'ARRAY' ) {
-                map { $_ = $self->_quote_value($_) } @{ $args{'value'} };
-            } else {
-                $args{'value'} = $self->_quote_value( $args{'value'} );
-            }
-        }
-    }
-
-    if ( $args{'escape'} ) {
-        $args{'escape'} = 'ESCAPE ' . $self->_quote_value( $args{escape} );
-    }
-
     #If we're performing a left join, we really want the alias to be the
     #left join criterion.
 
@@ -1260,6 +1230,72 @@ sub limit {
         : $args{'column'};
     my $clause_id = $args{'subclause'} || $qualified_column;
 
+    # XXX: when is column_obj undefined?
+    my $class
+        = $self->{joins}{ $args{alias} }
+        && $self->{joins}{ $args{alias} }{class}
+        ? $self->{joins}{ $args{alias} }{class}
+        ->new( $self->_new_collection_args )
+        : $self;
+    my $column_obj = $class->new_item()->column( $args{column} );
+
+    $self->record_class->new(handle => $self->_handle)->_apply_input_filters(
+        column    => $column_obj,
+        value_ref => \$args{'value'},
+    ) if $column_obj && $column_obj->encode_on_select;
+
+    # make passing in an object DTRT
+    my $value_ref = ref( $args{value} );
+    if ($value_ref) {
+        if ( ( $value_ref ne 'ARRAY' )
+            && $args{value}->isa('Jifty::DBI::Record') )
+        {
+            $args{value} = $args{value}->id;
+        } elsif ( $value_ref eq 'ARRAY' ) {
+
+            # Don't modify the original reference, it isn't polite
+            $args{value} = [ @{ $args{value} } ];
+            map {
+                $_ = (
+                      ( ref $_ && $_->isa('Jifty::DBI::Record') )
+                    ? ( $_->id )
+                    : $_
+                    )
+            } @{ $args{value} };
+        }
+    }
+
+    #since we're changing the search criteria, we need to redo the search
+    $self->redo_search();
+
+    if ( $args{'column'} ) {
+
+        #If it's a like, we supply the %s around the search term
+        if ( $args{'operator'} =~ /MATCHES/i ) {
+            $args{'value'} = "%" . $args{'value'} . "%";
+        } elsif ( $args{'operator'} =~ /STARTS_?WITH/i ) {
+            $args{'value'} = $args{'value'} . "%";
+        } elsif ( $args{'operator'} =~ /ENDS_?WITH/i ) {
+            $args{'value'} = "%" . $args{'value'};
+        }
+        $args{'operator'} =~ s/(?:MATCHES|ENDS_?WITH|STARTS_?WITH)/LIKE/i;
+
+        #if we're explicitly told not to to quote the value or
+        # we're doing an IS or IS NOT (null), don't quote the operator.
+
+        if ( $args{'quote_value'} && $args{'operator'} !~ /IS/i ) {
+            if ( $value_ref eq 'ARRAY' ) {
+                map { $_ = $self->_quote_value($_) } @{ $args{'value'} };
+            } else {
+                $args{'value'} = $self->_quote_value( $args{'value'} );
+            }
+        }
+    }
+
+    if ( $args{'escape'} ) {
+        $args{'escape'} = 'ESCAPE ' . $self->_quote_value( $args{escape} );
+    }
+
     # If we're trying to get a leftjoin restriction, lets set
     # $restriction to point there. otherwise, lets construct normally
 
@@ -1274,11 +1310,6 @@ sub limit {
 
     # If it's a new value or we're overwriting this sort of restriction,
 
-    # XXX: when is column_obj undefined?
-    my $class = $self->{joins}{$args{alias}} && $self->{joins}{$args{alias}}{class} 
-      ? $self->{joins}{$args{alias}}{class}->new($self->_new_collection_args)
-      : $self;
-    my $column_obj = $class->new_item()->column( $args{column} );
     my $case_sensitive = $column_obj ? $column_obj->case_sensitive : 0;
     $case_sensitive = $args{'case_sensitive'}
         if defined $args{'case_sensitive'};
@@ -1288,8 +1319,8 @@ sub limit {
         && !$case_sensitive )
     {
 
-        # don't worry about case for numeric columns_in_db
-        if ( defined $column_obj ? $column_obj->is_string : 1 ) {
+# don't worry about case for numeric columns_in_db - only be case insensitive when we KNOW it's a blob
+        if ( defined $column_obj ? $column_obj->is_string : 0 ) {
             ( $qualified_column, $args{'operator'}, $args{'value'} )
                 = $self->_handle->_make_clause_case_insensitive(
                 $qualified_column, $args{'operator'}, $args{'value'} );
@@ -1416,7 +1447,9 @@ sub _compile_generic_restrictions {
             unless ( ref $entry ) {
                 $result .= ' ' . $entry . ' ';
             } else {
-                $result .= join ' ', grep { defined } @{$entry}{qw(column operator value escape)};
+                $result .= join ' ',
+                    grep {defined}
+                    @{$entry}{qw(column operator value escape)};
             }
         }
         $result .= ')';
@@ -1483,6 +1516,9 @@ in the C<alias.column> format.
 
 Use array of hashes to order by many columns/functions.
 
+Calling this I<sets> the ordering, it doesn't refine it. If you want to keep
+previous ordering, use C<add_order_by>.
+
 The results would be unordered if method called without arguments.
 
 Returns the current list of columns.
@@ -1493,12 +1529,28 @@ sub order_by {
     my $self = shift;
     return if $self->derived;
     if (@_) {
+        $self->{'order_by'} = [];
+        $self->add_order_by(@_);
+    }
+    return ( $self->{'order_by'} || [] );
+}
+
+=head2 add_order_by EMPTY|HASH|ARRAY_OF_HASHES
+
+Same as order_by, except it will not reset the ordering you have already set.
+
+=cut
+
+sub add_order_by {
+    my $self = shift;
+    return if $self->derived;
+    if (@_) {
         my @args = @_;
 
         unless ( UNIVERSAL::isa( $args[0], 'HASH' ) ) {
             @args = {@args};
         }
-        $self->{'order_by'} = \@args;
+        push @{ $self->{'order_by'} ||= [] }, @args;
         $self->redo_search();
     }
     return ( $self->{'order_by'} || [] );
@@ -1646,9 +1698,10 @@ sub new_alias {
     my $self = shift;
     my $refers_to = shift || die "Missing parameter";
     my $table;
-
+    my $class = undef;
     if ( $refers_to->can('table') ) {
         $table = $refers_to->table;
+        $class = $refers_to;
     } else {
         $table = $refers_to;
     }
@@ -1656,9 +1709,10 @@ sub new_alias {
     my $alias = $self->_get_alias($table);
 
     $self->{'joins'}{$alias} = {
-        alias        => $alias,
-        table        => $table,
-        type         => 'CROSS',
+        alias => $alias,
+        table => $table,
+        type  => 'CROSS',
+        ( $class ? ( class => $class ) : () ),
         alias_string => " CROSS JOIN $table $alias ",
     };
 
@@ -1740,18 +1794,24 @@ the selected page.
 sub set_page_info {
     my $self = shift;
     my %args = (
-        per_page     => undef,
-        current_page => undef,    # 1-based
+        per_page     => 0,
+        current_page => 1,    # 1-based
         @_
     );
     return if $self->derived;
 
-    $self->pager->total_entries( $self->count_all )
+    my $weakself = $self;
+    weaken($weakself);
+
+    $self->pager->total_entries( lazy { $weakself->count_all } )
         ->entries_per_page( $args{'per_page'} )
         ->current_page( $args{'current_page'} );
 
     $self->rows_per_page( $args{'per_page'} );
-    $self->first_row( $self->pager->first || 1 );
+
+    # We're not using $pager->first because it automatically does a count_all
+    # to correctly return '0' for empty collections
+    $self->first_row( ( $args{'current_page'} - 1 ) * $args{'per_page'} + 1 );
 
 }
 

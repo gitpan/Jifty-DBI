@@ -26,12 +26,15 @@ lib/Jifty/DBI/Collection/Unique.pm
 lib/Jifty/DBI/Column.pm
 lib/Jifty/DBI/Filter.pm
 lib/Jifty/DBI/Filter/base64.pm
+lib/Jifty/DBI/Filter/Boolean.pm
 lib/Jifty/DBI/Filter/Date.pm
 lib/Jifty/DBI/Filter/DateTime.pm
+lib/Jifty/DBI/Filter/Duration.pm
 lib/Jifty/DBI/Filter/SaltHash.pm
 lib/Jifty/DBI/Filter/Storable.pm
 lib/Jifty/DBI/Filter/Time.pm
 lib/Jifty/DBI/Filter/Truncate.pm
+lib/Jifty/DBI/Filter/URI.pm
 lib/Jifty/DBI/Filter/utf8.pm
 lib/Jifty/DBI/Filter/YAML.pm
 lib/Jifty/DBI/Handle.pm
@@ -68,7 +71,9 @@ t/02searches_joins.t
 t/03rebless.t
 t/04memcached.t
 t/06filter.t
+t/06filter_boolean.t
 t/06filter_datetime.t
+t/06filter_duration.t
 t/06filter_storable.t
 t/06filter_truncate.t
 t/06filter_utf8.t
@@ -83,6 +88,7 @@ t/16inheritance.t
 t/17virtualtypes.t
 t/18triggers.t
 t/19reference.t
+t/20overload.t
 t/case_sensitivity.t
 t/metadata.t
 t/pod-coverage.t

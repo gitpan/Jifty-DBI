@@ -28,12 +28,16 @@ my @attrs = qw/
     record_class
     attributes
     case_sensitive
+    private
+    protected
+    encode_on_select
     /;
 
 # these actually live in the attributes hash
 my @handy_attrs = qw/
     container
     label hints render_as
+    documentation
     valid_values
     available_values
     autocompleted
@@ -142,6 +146,8 @@ known attributes are:
 =item     available_values
 
 =item     autocompleted
+
+=item     documentation
 
 =back
 

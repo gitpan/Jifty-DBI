@@ -88,6 +88,7 @@ sub connect {
         user       => undef,
         password   => undef,
         requiressl => undef,
+        extra      => {},
         @_
     );
 
@@ -109,7 +110,7 @@ sub connect {
     if ( ( !$self->dbh ) || ( !$self->dbh->ping ) || ( $self->dsn ne $dsn ) )
     {
         my $handle
-            = DBI->connect( $self->dsn, $args{'user'}, $args{'password'} )
+            = DBI->connect( $self->dsn, $args{'user'}, $args{'password'}, $args{'extra'} )
             || Carp::croak "Connect Failed $DBI::errstr\n";
 
 #databases do case conversion on the name of columns returned.
@@ -196,6 +197,7 @@ sub build_dsn {
 
     delete $args{'user'};
     delete $args{'password'};
+    delete $args{'extra'};
 
     $self->{'dsn'} = "dbi:$driver:"
         . CORE::join( ';',
@@ -291,14 +293,14 @@ sub _log_sql_statement {
     my $duration  = shift;
     my @bind      = @_;
 
-    my $results = {};
+    my %results;
+    my @log = (Time::HiRes::time(), $statement, [@bind], $duration, \%results);
+
     while (my ($name, $code) = each %{ $self->{'_logsqlhooks'} || {} }) {
-        $results->{$name} = $code->();
+        $results{$name} = $code->(@log);
     }
 
-    push @{ $self->{'StatementLog'} },
-        ( [ Time::HiRes::time(), $statement, [@bind], $duration, $results ] );
-
+    push @{ $self->{'StatementLog'} }, \@log;
 }
 
 =head2 clear_sql_statement_log
@@ -550,6 +552,13 @@ sub simple_query {
     {
         no warnings 'uninitialized';    # undef in bind_values makes DBI sad
         eval { $executed = $sth->execute(@bind_values) };
+
+        # try to ping and reconnect, if the DB connection failed
+        if ($@ and !$self->dbh->ping) {
+            $self->dbh(undef); # don't try pinging again, just connect
+            $self->connect; 
+            eval { $executed = $sth->execute(@bind_values) };
+        }
     }
     if ( $self->log_sql_statements ) {
         $self->_log_sql_statement( $query_string,
@@ -724,12 +733,18 @@ Emulates nested transactions, by keeping a transaction stack depth.
 
 sub begin_transaction {
     my $self = shift;
-    $TRANSDEPTH++;
-    if ( $TRANSDEPTH > 1 ) {
-        return ($TRANSDEPTH);
-    } else {
-        return ( $self->dbh->begin_work );
+
+    if ( $TRANSDEPTH > 0 ) {
+        # We're inside a transaction.
+        $TRANSDEPTH++;
+        return $TRANSDEPTH;
     }
+
+    my $rv = $self->dbh->begin_work;
+    if ($rv) {
+        $TRANSDEPTH++;
+    }
+    return $rv;
 }
 
 =head2 commit
@@ -745,13 +760,18 @@ sub commit {
         Carp::confess(
             "Attempted to commit a transaction with none in progress");
     }
-    $TRANSDEPTH--;
 
-    if ( $TRANSDEPTH == 0 ) {
-        return ( $self->dbh->commit );
-    } else {    #we're inside a transaction
-        return ($TRANSDEPTH);
+    if ($TRANSDEPTH > 1) {
+        # We're inside a nested transaction.
+        $TRANSDEPTH--;
+        return $TRANSDEPTH;
     }
+
+    my $rv = $self->dbh->commit;
+    if ($rv) {
+        $TRANSDEPTH--;
+    }
+    return $rv;
 }
 
 =head2 rollback [FORCE]
@@ -779,13 +799,22 @@ sub rollback {
         return ( $dbh->rollback );
     }
 
-    $TRANSDEPTH-- if ( $TRANSDEPTH >= 1 );
-    if ( $TRANSDEPTH == 0 ) {
-        return ( $dbh->rollback );
-    } else {    #we're inside a transaction
-        return ($TRANSDEPTH);
+    if ($TRANSDEPTH == 0) {
+        # We're not actually in a transaction.
+        return 1;
     }
 
+    if ($TRANSDEPTH > 1) {
+        # We're inside a nested transaction.
+        $TRANSDEPTH--;
+        return $TRANSDEPTH;
+    }
+
+    my $rv = $self->dbh->rollback;
+    if ($rv) {
+        $TRANSDEPTH--;
+    }
+    return $rv;
 }
 
 =head2 force_rollback
@@ -1074,7 +1103,7 @@ sub may_be_null {
         # left joins on the left side so later we'll get 1 AND x expression
         # which equal to x, so we just skip it
         next if $join->{'type'} eq 'LEFT';
-        next unless $join->{'depends_on'} eq $args{'alias'};
+        next unless $join->{'depends_on'} && ($join->{'depends_on'} eq $args{'alias'});
 
         my @tmp = map { ( '(', @$_, ')', $join->{'entry_aggregator'} ) }
             values %{ $join->{'criteria'} };
@@ -1230,6 +1259,28 @@ sub log {
     warn $msg . "\n";
 
 }
+
+=head2 canonical_true
+
+This returns the canonical true value for this database. For example, in SQLite
+it is 1 but in Postgres it is 't'.
+
+The default is 1.
+
+=cut
+
+sub canonical_true { 1 }
+
+=head2 canonical_false
+
+This returns the canonical false value for this database. For example, in SQLite
+it is 0 but in Postgres it is 'f'.
+
+The default is 0.
+
+=cut
+
+sub canonical_false { 0 }
 
 =head2 DESTROY
 

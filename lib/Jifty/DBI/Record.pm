@@ -532,9 +532,9 @@ sub add_column {
 
 =head2 column
 
-    my $value = $self->column($column);
+    my $column = $self->column($column_name);
 
-Returns the $value of a $column.
+Returns the L<Jifty::DBI::Column> object of the specified column name.
 
 =cut
 
@@ -598,8 +598,6 @@ sub _columns_hashref {
 
     return ( $self->COLUMNS || {} );
 }
-
-# sub {{{ readable_attributes
 
 =head2 readable_attributes
 
@@ -1068,6 +1066,11 @@ sub load_by_cols {
                 $value = $value->id;
             }
 
+            $self->_apply_input_filters(
+                column    => $column_obj,
+                value_ref => \$value,
+            ) if $column_obj->encode_on_select;
+
             # if the handle is in a case_sensitive world and we need to make
             # a case-insensitive query
             if ( $self->_handle->case_sensitive && $value ) {
@@ -1363,13 +1366,17 @@ sub __create {
             and not ref $column->default )
         {
             $attribs{ $column->name } = $column->default;
+
+            $self->_apply_input_filters(
+                column    => $column,
+                value_ref => \$attribs{ $column->name },
+            );
         }
 
         if (    not defined $attribs{ $column->name }
             and $column->mandatory
             and $column->type ne "serial" )
         {
-
             # Enforce "mandatory"
             Carp::carp "Did not supply value for mandatory column "
                 . $column->name;
@@ -1528,14 +1535,13 @@ sub _filters {
     my $self = shift;
     my %args = ( direction => 'input', column => undef, @_ );
 
-    my @filters = ();
-    my @objs = ( $self, $args{'column'}, $self->_handle );
-    @objs = reverse @objs if $args{'direction'} eq 'output';
-    my $method = $args{'direction'} . "_filters";
-    foreach my $obj (@objs) {
-        push @filters, $obj->$method();
+    if ( $args{'direction'} eq 'input' ) {
+        return grep $_, map $_->input_filters,
+            ( $self, $args{'column'}, $self->_handle );
+    } else {
+        return grep $_, map $_->output_filters,
+            ( $self->_handle, $args{'column'}, $self );
     }
-    return grep $_, @filters;
 }
 
 sub _apply_input_filters {
@@ -1570,6 +1576,7 @@ sub _apply_filters {
             record    => $self,
             column    => $args{'column'},
             value_ref => $args{'value_ref'},
+            handle    => $self->_handle,
         );
 
         # XXX TODO error proof this
@@ -1626,7 +1633,8 @@ sub run_canonicalization_for_column {
 
     my ( $ret, $value_ref ) = $self->_run_callback(
         name => "canonicalize_" . $args{'column'},
-        args => $args{'value'}
+        args => $args{'value'},
+        short_circuit => 0,
     );
     return unless defined $ret;
     return (
@@ -1647,6 +1655,8 @@ sub has_canonicalizer_for_column {
     my $key    = shift;
     my $method = "canonicalize_$key";
     if ( $self->can($method) ) {
+        return 1;
+    } elsif ( Class::Trigger::__fetch_all_triggers($self, $method) ) {
         return 1;
     } else {
         return undef;
@@ -1689,7 +1699,10 @@ Returns true if COLUMN has a validator, otherwise returns undef.
 sub has_validator_for_column {
     my $self = shift;
     my $key  = shift;
-    if ( $self->can( "validate_" . $key ) ) {
+    my $method = "validate_$key";
+    if ( $self->can( $method ) ) {
+        return 1;
+    } elsif ( Class::Trigger::__fetch_all_triggers($self, $method) ) {
         return 1;
     } else {
         return undef;
@@ -1701,6 +1714,7 @@ sub _run_callback {
     my %args = (
         name => undef,
         args => undef,
+        short_circuit => 1,
         @_
     );
 
@@ -1710,7 +1724,7 @@ sub _run_callback {
     if ( my $func = $self->can($method) ) {
         @results = $func->( $self, $args{args} );
         return ( wantarray ? ( undef, [ [@results] ] ) : undef )
-            unless $results[0];
+            if $args{short_circuit} and not $results[0];
     }
     $ret = $self->call_trigger( $args{'name'} => $args{args} );
     return (

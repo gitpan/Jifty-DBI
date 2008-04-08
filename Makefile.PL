@@ -20,11 +20,12 @@ requires('Exporter::Lite');
 requires('Hash::Merge');
 requires('Lingua::EN::Inflect');
 requires('Object::Declare' => 0.22);
-requires('UNIVERSAL::require');
+requires('UNIVERSAL::require' => 0.11);
 requires('Scalar::Defer' => 0.10);
 requires('version');
 #requires('Class::Trigger');
 build_requires('Test::More' => 0.52);
+build_requires('Test::Warn' => 0.10);
 build_requires('DBD::SQLite');
 no_index directory => 'ex';
 features( 
@@ -35,6 +36,15 @@ features(
     'YAML filter' => [
         -default => 1,
         (can_cc() ? requires('YAML::Syck') : requires('YAML')),
+    ],
+    'Duration filter' => [
+        -default => 1,
+        'Time::Duration' => '',
+        'Time::Duration::Parse' => '0.05',
+    ],
+    'URI filter' => [
+        -default => 1,
+        'URI' => '',
     ],
 );
 auto_install();
