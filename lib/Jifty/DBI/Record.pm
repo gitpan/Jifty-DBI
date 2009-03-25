@@ -258,7 +258,9 @@ sub _init_methods_for_column {
     # Check for the correct column type when the Storable filter is in use
     if ( grep { $_ eq 'Jifty::DBI::Filter::Storable' }
         ( $column->input_filters, $column->output_filters )
-            and $column->type !~ /^(blob|bytea)$/i )
+         and not grep { $_ eq 'Jifty::DBI::Filter::base64' }
+        ( $column->input_filters, $column->output_filters )
+         and $column->type !~ /^(blob|bytea)$/i )
     {
         die "Column '$column_name' in @{[$column->record_class]} "
             . "uses the Storable filter but is not of type 'blob'.\n";
@@ -764,6 +766,54 @@ sub _value {
     return $value;
 }
 
+=head2 __raw_value
+
+Takes a column name and returns that column's raw value.
+Subclasses should never override __raw_value.
+
+=cut
+
+sub __raw_value {
+    my $self = shift;
+
+    my $column_name = shift;
+
+    # In the default case of "yeah, we have a value", return it as
+    # fast as we can.
+    return $self->{'raw_values'}{$column_name}
+      if $self->{'fetched'}{$column_name};
+
+    if ( !$self->{'fetched'}{$column_name} and my $id = $self->id() ) {
+        my $pkey = $self->_primary_key();
+        my $query_string =
+            "SELECT "
+          . $column_name
+          . " FROM "
+          . $self->table
+          . " WHERE $pkey = ?";
+        my $sth = $self->_handle->simple_query( $query_string, $id );
+        my ($value) = eval { $sth->fetchrow_array() };
+        $self->{'raw_values'}{$column_name}  = $value;
+        $self->{'fetched'}{$column_name} = 1;
+    }
+
+    return $self->{'raw_values'}{$column_name};
+}
+
+=head2 resolve_column
+
+given a column name, resolve it, even if it's actually an alias 
+return the column object.
+
+=cut
+
+sub resolve_column {
+    my $self = shift;
+    my $column_name = shift;
+    return unless $column_name;
+    return $self->COLUMNS->{$column_name};
+}
+
 =head2 __value
 
 Takes a column name and returns that column's value. Subclasses should
@@ -774,16 +824,10 @@ never override __value.
 sub __value {
     my $self = shift;
 
-    my $column_name = shift;
+    my $column = $self->COLUMNS->{ +shift }; # Shortcut around ->resolve_column
+    return unless $column;
 
-    # If the requested column is actually an alias for another, resolve it.
-    my $column = $self->column($column_name);
-    if ( $column and defined $column->alias_for_column ) {
-        $column      = $self->column( $column->alias_for_column() );
-        $column_name = $column->name;
-    }
-
-    return unless ($column);
+    my $column_name = $column->{name}; # Speed optimization
 
     # In the default case of "yeah, we have a value", return it as
     # fast as we can.
@@ -791,19 +835,12 @@ sub __value {
         if ( $self->{'fetched'}{$column_name}
         && $self->{'decoded'}{$column_name} );
 
-    if ( !$self->{'fetched'}{$column_name} and my $id = $self->id() ) {
-        my $pkey = $self->_primary_key();
-        my $query_string
-            = "SELECT "
-            . $column_name
-            . " FROM "
-            . $self->table
-            . " WHERE $pkey = ?";
-        my $sth = $self->_handle->simple_query( $query_string, $id );
-        my ($value) = eval { $sth->fetchrow_array() };
-        $self->{'values'}{$column_name}  = $value;
-        $self->{'fetched'}{$column_name} = 1;
+    unless ($self->{'fetched'}{$column_name}) {
+        # Fetch it, and mark it as not decoded
+        $self->{'values'}{$column_name} = $self->__raw_value( $column_name );
+        $self->{'decoded'}{$column_name} = 0;
     }
+
     unless ( $self->{'decoded'}{$column_name} ) {
         $self->_apply_output_filters(
             column    => $column,
@@ -909,7 +946,7 @@ sub __set {
         value_ref => \$args{'value'}
     );
 
-    # if value is not fetched or it's allready decoded
+    # if value is not fetched or it's already decoded
     # then we don't check eqality
     # we also don't call __value because it decodes value, but
     # we need encoded value
@@ -991,6 +1028,7 @@ sub __set {
         # XXX TODO primary_keys
         $self->load_by_cols( id => $self->id );
     } else {
+        $self->{'raw_values'}{ $column->name }  = $unmunged_value;
         $self->{'values'}{ $column->name }  = $unmunged_value;
         $self->{'decoded'}{ $column->name } = 0;
     }
@@ -1024,7 +1062,15 @@ matches all keys.
 The hash's keys are the columns to look at.
 
 The hash's values are either: scalar values to look for OR hash
-references which contain 'operator' and 'value'
+references which contain 'operator', 'value', 'case_sensitive' 
+or 'function'
+
+To load something case sensitively on a case insensitive database,
+you can do:
+
+  $record->load_by_cols( column => { operator => '=',
+                                     value => 'Foo',
+                                     case_sensitive => 1 } );
 
 =cut
 
@@ -1138,28 +1184,31 @@ record's loaded values hash.
 =cut
 
 sub load_from_hash {
-    my $class   = shift;
+    my $self    = shift;
     my $hashref = shift;
-    my ($self);
-
-    if ( ref($class) ) {
-        ( $self, $class ) = ( $class, undef );
-    } else {
-        $self = $class->new(
-            handle => ( delete $hashref->{'_handle'} || undef ) );
+    my %args = @_;
+    if ($args{fast}) {
+        # Optimization for loading from database
+        $self->{values} = $hashref;
+        $self->{fetched}{$_} = 1 for keys %{$hashref};
+        $self->{raw_values} = {};
+        $self->{decoded} = {};
+        return $self->{values}{id};
     }
 
-    $self->{values} = {};
+    unless ( ref $self ) {
+        $self = $self->new( handle => delete $hashref->{'_handle'} );
+    }
 
-    #foreach my $f ( keys %$hashref ) { $self->{'fetched'}{  $f } = 1; }
-    foreach my $col ( map { $_->name } $self->columns ) {
-        next unless exists $hashref->{ lc($col) };
+    $self->{'values'} = {};
+    $self->{'raw_values'} = {};
+    $self->{'fetched'} = {};
+
+    foreach my $col ( grep exists $hashref->{ lc $_ }, map $_->name, $self->columns ) {
         $self->{'fetched'}{$col} = 1;
-        $self->{'values'}->{$col} = $hashref->{ lc($col) };
-
+        $self->{'values'}{$col} = $hashref->{ lc $col };
     }
 
-    #$self->{'values'}  = $hashref;
     $self->{'decoded'} = {};
     return $self->id();
 }
@@ -1182,7 +1231,8 @@ sub _load_from_sql {
     return ( 0, "Couldn't execute query" ) unless $sth;
 
     my $hashref = $sth->fetchrow_hashref;
-    delete $self->{values};
+    delete $self->{'values'};
+    delete $self->{'raw_values'};
     $self->{'fetched'} = {};
     $self->{'decoded'} = {};
 
@@ -1191,6 +1241,7 @@ sub _load_from_sql {
         next unless exists $hashref->{ lc($col) };
         $self->{'fetched'}{$col} = 1;
         $self->{'values'}->{$col} = $hashref->{ lc($col) };
+        $self->{'raw_values'}->{$col} = $hashref->{ lc($col) };
     }
     if ( !$self->{'values'} && $sth->err ) {
         return ( 0, "Couldn't fetch row: " . $sth->err );
@@ -1207,9 +1258,6 @@ sub _load_from_sql {
         return ( 0, "Missing a primary key?" );
     }
 
-    foreach my $f ( keys %{ $self->{'values'} } ) {
-        $self->{'fetched'}{$f} = 1;
-    }
     return ( 1, "Found object" );
 
 }
@@ -1552,6 +1600,7 @@ sub _apply_output_filters {
     return (shift)->_apply_filters( direction => 'output', @_ );
 }
 
+{ my %cache = ();
 sub _apply_filters {
     my $self = shift;
     my %args = (
@@ -1564,14 +1613,20 @@ sub _apply_filters {
     my @filters = $self->_filters(%args);
     my $action = $args{'direction'} eq 'output' ? 'decode' : 'encode';
     foreach my $filter_class (@filters) {
-        local $UNIVERSAL::require::ERROR;
-        $filter_class->require()
-            unless $INC{ join( '/', split( /::/, $filter_class ) ) . ".pm" };
-
-        if ($UNIVERSAL::require::ERROR) {
-            warn $UNIVERSAL::require::ERROR;
+        unless ( exists $cache{ $filter_class } ) {
+            local $UNIVERSAL::require::ERROR;
+            $filter_class->require;
+            if ($UNIVERSAL::require::ERROR) {
+                warn $UNIVERSAL::require::ERROR;
+                $cache{ $filter_class } = 0;
+                next;
+            }
+            $cache{ $filter_class } = 1;
+        }
+        elsif ( !$cache{ $filter_class } ) {
             next;
         }
+
         my $filter = $filter_class->new(
             record    => $self,
             column    => $args{'column'},
@@ -1582,7 +1637,7 @@ sub _apply_filters {
         # XXX TODO error proof this
         $filter->$action();
     }
-}
+} }
 
 =head2 is_distinct COLUMN_NAME, VALUE
 
@@ -1663,7 +1718,7 @@ sub has_canonicalizer_for_column {
     }
 }
 
-=head2 run_validation_for_column column => 'COLUMN', value => 'VALUE'
+=head2 run_validation_for_column column => 'COLUMN', value => 'VALUE' [extra => \@ARGS]
 
 Runs all validators for the specified column.
 
@@ -1674,13 +1729,14 @@ sub run_validation_for_column {
     my %args = (
         column => undef,
         value  => undef,
+        extra  => [],
         @_
     );
     my $key  = $args{'column'};
     my $attr = $args{'value'};
 
     my ( $ret, $results )
-        = $self->_run_callback( name => "validate_" . $key, args => $attr );
+        = $self->_run_callback( name => "validate_" . $key, args => $attr, extra => $args{'extra'} );
 
     if ( defined $ret ) {
         return ( 1, 'Validation ok' );
@@ -1715,6 +1771,7 @@ sub _run_callback {
         name => undef,
         args => undef,
         short_circuit => 1,
+        extra => [],
         @_
     );
 
@@ -1722,16 +1779,29 @@ sub _run_callback {
     my $method = $args{'name'};
     my @results;
     if ( my $func = $self->can($method) ) {
-        @results = $func->( $self, $args{args} );
+        @results = $func->( $self, $args{args}, @{$args{'extra'}} );
         return ( wantarray ? ( undef, [ [@results] ] ) : undef )
             if $args{short_circuit} and not $results[0];
     }
-    $ret = $self->call_trigger( $args{'name'} => $args{args} );
+    $ret = $self->call_trigger( $args{'name'} => $args{args}, @{$args{'extra'}} );
     return (
         wantarray
         ? ( $ret, [ [@results], @{ $self->last_trigger_results } ] )
         : $ret
     );
+}
+
+=head2 unload_value COLUMN
+
+Purges the cached value of COLUMN from the object, forcing it to be
+fetched from the database next time it is queried.
+
+=cut
+
+sub unload_value {
+    my $self = shift;
+    my $column = shift;
+    delete $self->{$_}{$column} for qw/values raw_values fetched decoded _prefetched/;
 }
 
 1;

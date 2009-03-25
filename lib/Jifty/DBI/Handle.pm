@@ -19,8 +19,7 @@ if ( my $pattern = $ENV{JIFTY_DBQUERY_CALLER} ) {
         'Jifty::DBI::Handle::simple_query',
         pre => sub {
             return unless $_[1] =~ m/$pattern/;
-            warn $_[1] . '   ' . CORE::join( ',', @_[ 2 .. $#_ ] ) . "\n";
-            Carp::cluck;
+            Carp::cluck($_[1] . '   ' . CORE::join( ',', @_[ 2 .. $#_ ] ));
         }
     );
 }
@@ -796,6 +795,10 @@ sub rollback {
 #unless ($TRANSDEPTH) {Carp::confess("Attempted to rollback a transaction with none in progress")};
     if ($force) {
         $TRANSDEPTH = 0;
+
+        Jifty::DBI::Record->flush_cache
+            if Jifty::DBI::Record->can('flush_cache');
+
         return ( $dbh->rollback );
     }
 
@@ -810,7 +813,10 @@ sub rollback {
         return $TRANSDEPTH;
     }
 
-    my $rv = $self->dbh->rollback;
+    Jifty::DBI::Record->flush_cache
+        if Jifty::DBI::Record->can('flush_cache');
+
+    my $rv = $dbh->rollback;
     if ($rv) {
         $TRANSDEPTH--;
     }
@@ -874,7 +880,6 @@ L<Jifty::DBI::Collection> object'.
 
 This performs the join.
 
-
 =cut
 
 sub join {
@@ -934,7 +939,7 @@ sub join {
                 @args{qw/alias1 alias2/}   = @args{qw/alias2 alias1/};
                 @args{qw/column1 column2/} = @args{qw/column2 column1/};
 
-                return $self->Jifty::DBI::Collection::limit(
+                return $args{'collection'}->limit(
                     entry_aggregator => 'AND',
                     @_,
                     quote_value => 0,

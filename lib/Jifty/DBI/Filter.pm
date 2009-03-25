@@ -84,18 +84,18 @@ sub new {
         handle    => undef,
         @_
     );
-    my $self = {};
-    bless $self, $class;
-
-    for ( keys %args ) {
-        if ( $self->can($_) ) {
-            $self->$_( $args{$_} );
-        }
-
+    my $self = $class->SUPER::new( {
+        record    => delete $args{record},
+        column    => delete $args{column},
+        value_ref => delete $args{value_ref},
+        handle    => delete $args{handle},
+    } );
+    
+    for ( grep $self->can($_), keys %args ) {
+        $self->$_( $args{$_} );
     }
 
     return ($self);
-
 }
 
 =head2 encode
