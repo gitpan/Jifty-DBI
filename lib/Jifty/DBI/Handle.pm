@@ -73,6 +73,10 @@ If you created the handle with
 and there is a Jifty::DBI::Handle::(Driver) subclass for the driver you have chosen,
 the handle will be automatically "upgraded" into that subclass.
 
+If there is an error, an exception will be thrown. If a connection has already
+been established and is still active, C<undef> will be returned (which is not
+an error). Otherwise, if a new connection is made, a true value will be returned.
+
 =cut
 
 sub connect {
@@ -110,7 +114,7 @@ sub connect {
     {
         my $handle
             = DBI->connect( $self->dsn, $args{'user'}, $args{'password'}, $args{'extra'} )
-            || Carp::croak "Connect Failed $DBI::errstr\n";
+            || Carp::croak "Connection failed: $DBI::errstr\n";
 
 #databases do case conversion on the name of columns returned.
 #actually, some databases just ignore case. this smashes it to something consistent
@@ -1318,6 +1322,61 @@ sub rename_table {
 # Oracle, Pg, SQLite are ok with this
     return $self->simple_query("ALTER TABLE $args{'table'} RENAME TO $args{'to'}");
 }
+
+=head2 supported_drivers
+
+Returns a list of the drivers L<Jifty::DBI> supports.
+
+=cut
+
+sub supported_drivers {
+    return qw(
+        SQLite
+        Informix
+        mysql
+        mysqlPP
+        ODBC
+        Oracle
+        Pg
+        Sybase
+    );
+}
+
+=head2 available_drivers
+
+Returns a list of the available drivers based on the presence of C<DBD::*>
+modules.
+
+=cut
+
+sub available_drivers {
+    my $self = shift;
+
+    local $@;
+    return grep { eval "require DBD::" . $_ } $self->supported_drivers;
+}
+
+=head2 is_available_driver
+
+Returns a boolean indicating whether the provided driver is available.
+
+=cut
+
+do {
+    # lazily memoize
+    my $is_available_driver;
+
+    sub is_available_driver {
+        my $self   = shift;
+        my $driver = shift;
+
+        if (!$is_available_driver) {
+            %$is_available_driver = map { $_ => 1 } $self->available_drivers;
+        }
+
+        return $is_available_driver->{$driver};
+    }
+};
 
 =head2 DESTROY
 
