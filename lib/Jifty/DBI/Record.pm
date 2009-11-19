@@ -89,8 +89,10 @@ sub import {
     my ($flag) = @_;
     if ( $class->isa(__PACKAGE__) and defined $flag and $flag eq '-base' ) {
         my $descendant = (caller)[0];
-        no strict 'refs';
-        push @{ $descendant . '::ISA' }, $class;
+        unless ( $descendant->isa($class) ) {
+            no strict 'refs';
+            push @{ $descendant . '::ISA' }, $class
+        }
         shift;
 
         # run the schema callback
@@ -604,17 +606,27 @@ sub _columns_hashref {
 
 =head2 readable_attributes
 
-Returns a list this table's readable columns
+Returns the list of this table's readable columns. They are first sorted so
+that primary keys come first, and then they are sorted in alphabetical order.
 
 =cut
 
 sub readable_attributes {
     my $self = shift;
-    return @{
-        $self->_READABLE_COLS_CACHE() || $self->_READABLE_COLS_CACHE(
-            [ sort map { $_->name } grep { $_->readable } $self->columns ]
-        )
-        };
+
+    my %is_primary = map { $_ => 1 } @{ $self->_primary_keys };
+
+    return @{ $self->_READABLE_COLS_CACHE() || $self->_READABLE_COLS_CACHE([
+        map  { $_->name }
+        sort { do {
+            no warnings 'uninitialized';
+            ($is_primary{$b->name} <=> $is_primary{$a->name})
+            ||
+            ($a->name cmp $b->name)
+        } }
+        grep { $_->readable }
+        $self->columns
+    ])};
 }
 
 =head2 serialize_metadata
