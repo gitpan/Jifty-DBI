@@ -1140,8 +1140,13 @@ sub load_by_cols {
                 }
             }
 
-            push @phrases, "$key $op $function";
-            push @bind,    $value;
+            if ($column_obj and $column_obj->no_placeholder and $function eq "?") {
+                push @phrases, "$key $op ".$self->_handle->quote_value($value);
+            } else {
+                push @phrases, "$key $op $function";
+                push @bind,    $value;
+            }
+
         } elsif ( !defined $hash{$key} ) {
             push @phrases, "$key IS NULL";
         } else {
@@ -1700,12 +1705,14 @@ sub run_canonicalization_for_column {
     my %args = (
         column => undef,
         value  => undef,
+        extra  => [],
         @_
     );
 
     my ( $ret, $value_ref ) = $self->_run_callback(
-        name => "canonicalize_" . $args{'column'},
-        args => $args{'value'},
+        name          => "canonicalize_" . $args{'column'},
+        args          => $args{'value'},
+        extra         => $args{'extra'},
         short_circuit => 0,
     );
     return unless defined $ret;
@@ -1753,7 +1760,11 @@ sub run_validation_for_column {
     my $attr = $args{'value'};
 
     my ( $ret, $results )
-        = $self->_run_callback( name => "validate_" . $key, args => $attr, extra => $args{'extra'} );
+        = $self->_run_callback(
+            name  => "validate_" . $key,
+            args  => $attr,
+            extra => $args{'extra'},
+        );
 
     if ( defined $ret ) {
         return ( 1, 'Validation ok' );

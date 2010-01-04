@@ -802,7 +802,7 @@ sub build_select_count_query {
     }
 
     # DISTINCT query only required for multi-table selects
-    if ( $self->_is_joined ) {
+    if ( $self->distinct_required or $self->prefetch_related ) {
         $query_string = $self->_handle->distinct_count( \$query_string );
     } else {
         $query_string = "SELECT count(main.id) FROM " . $query_string;
@@ -1265,15 +1265,15 @@ sub limit {
 
         if ( $args{'quote_value'} && $args{'operator'} !~ /IS/i ) {
             if ( $value_ref eq 'ARRAY' ) {
-                map { $_ = $self->_quote_value($_) } @{ $args{'value'} };
+                map { $_ = $self->_handle->quote_value($_) } @{ $args{'value'} };
             } else {
-                $args{'value'} = $self->_quote_value( $args{'value'} );
+                $args{'value'} = $self->_handle->quote_value( $args{'value'} );
             }
         }
     }
 
     if ( $args{'escape'} ) {
-        $args{'escape'} = 'ESCAPE ' . $self->_quote_value( $args{escape} );
+        $args{'escape'} = 'ESCAPE ' . $self->_handle->quote_value( $args{escape} );
     }
 
     # If we're trying to get a leftjoin restriction, lets set
@@ -1482,22 +1482,10 @@ sub _set_clause {
     $self->{$type} = $value;
 }
 
-# quote the search value
+# stub for back-compat
 sub _quote_value {
     my $self = shift;
-    my ($value) = @_;
-
-    my $tmp = $self->_handle->dbh->quote($value);
-
-    # Accomodate DBI drivers that don't understand UTF8
-    if ( $] >= 5.007 ) {
-        require Encode;
-        if ( Encode::is_utf8($tmp) ) {
-            Encode::_utf8_on($tmp);
-        }
-    }
-    return $tmp;
-
+    return $self->_handle->quote_value(@_);
 }
 
 =head2 order_by_cols DEPRECATED
