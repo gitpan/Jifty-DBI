@@ -550,7 +550,7 @@ Synonym for C<references>.
 =head2 by
 
 Helper for C<references>.  Used to specify what column name should be
-used in the referenced model.  See the documentation for C<references>e
+used in the referenced model.  See the documentation for C<references>.
 
 =head2 type
 
@@ -609,7 +609,7 @@ interfaces.  Correct usage is C<is mandatory>.
 
 =head2 not_null
 
-Same as L</mandatory>.  This is deprecated.  Currect usage would be
+Same as L</mandatory>.  This is deprecated.  Correct usage would be
 C<is not_null>.
 
 =head2 autocompleted
@@ -628,8 +628,16 @@ Correct usage is C<is distinct>.
 
 =head2 virtual
 
+Used to declare that a column references a collection, which hides
+it from many parts of Jifty. You probably do not want to set this manually,
+use C<references> instead.
+
+=head2 computed
+
 Declares that a column is not backed by an actual column in the
-database, but is instead computed on-the-fly.
+database, but is instead computed on-the-fly using a method written by
+the application author. Such columns cannot (yet) be used in searching,
+sorting, and so on, only inspected on an individual record.
 
 =head2 sort_order
 
@@ -682,7 +690,7 @@ sub till {
 =head2 valid_values
 
 A list of valid values for this column. Jifty will use this to
-autoconstruct a validator for you.  This list may also be used to
+automatically construct a validator for you.  This list may also be used to
 generate the user interface.  Correct usage is C<valid_values are
 qw/foo bar baz/>.
 

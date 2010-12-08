@@ -16,6 +16,7 @@ my @attrs = qw/
     max_length
     mandatory
     virtual
+    computed
     distinct
     sort_order
     refers_to by
@@ -62,12 +63,12 @@ for my $attr (@handy_attrs) {
 
 =head1 NAME
 
-Jifty::DBI::Column - Encapsulate's a single column in a Jifty::DBI::Record table
+Jifty::DBI::Column - Encapsulates a single column in a Jifty::DBI::Record table
 
 =head1 DESCRIPTION
 
 
-This class encapsulate's a single column in a Jifty::DBI::Record table
+This class encapsulates a single column in a Jifty::DBI::Record table
 description. It replaces the _accessible method in
 L<Jifty::DBI::Record>.
 
@@ -127,6 +128,18 @@ sub is_string {
     return 0;
 }
 
+=head2 is_boolean
+
+Returns true if this column is a boolean
+
+=cut
+
+sub is_boolean {
+    my $self = shift;
+    return 1 if grep { $_->isa('Jifty::DBI::Filter::Boolean') } $self->output_filters;
+    return 1 if $self->type =~ /BOOL/i;
+    return 0;
+}
 
 =head2 serialize_metadata
 

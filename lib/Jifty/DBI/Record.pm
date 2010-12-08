@@ -272,10 +272,15 @@ sub _init_methods_for_column {
     no strict 'refs';    # We're going to be defining subs
 
     if ( not $self->can($column_name) ) {
-
         # Accessor
         my $subref;
-        if ( $column->active ) {
+
+        if ($column->computed) {
+            $subref = sub {
+                Carp::croak("column '$column_name' in $package is computed but has no corresponding method");
+            };
+        }
+        elsif ( $column->active ) {
 
             if ( $column->readable ) {
                 if (UNIVERSAL::isa(
@@ -286,7 +291,7 @@ sub _init_methods_for_column {
                     $subref = sub {
                         if ( @_ > 1 ) {
                             Carp::carp
-                                "Value passed to column accessor.  You probably want to use the mutator.";
+                                "Value passed to column $column_name accessor.  You probably want to use the mutator.";
                         }
                         # This should be using _value, so we acl_check
                         # appropriately, except the acl checks often
@@ -308,7 +313,7 @@ sub _init_methods_for_column {
                     $subref = sub {
                         if ( @_ > 1 ) {
                             Carp::carp
-                                "Value passed to column accessor.  You probably want to use the mutator.";
+                                "Value passed to column $column_name accessor.  You probably want to use the mutator.";
                         }
                         return ( $_[0]->_value($column_name) );
                     };
@@ -405,7 +410,7 @@ sub _init_methods_for_column {
 
 =head2 null_reference 
 
-By default, Jifty::DBI::Record will return C<undef> for non-existant
+By default, Jifty::DBI::Record will return C<undef> for non-existent
 foreign references which don't exist.  That is, if each Employee
 C<refers_to> a Department, but isn't required to,
 C<<$model->department>> will return C<undef> for employees not in a
@@ -678,9 +683,9 @@ sub writable_attributes {
 
 =head2 record values
 
-As you've probably already noticed, C<Jifty::DBI::Record> autocreates
-methods for your standard get/set accessors. It also provides you with
-some hooks to massage the values being loaded or stored.
+As you've probably already noticed, C<Jifty::DBI::Record> automatically
+creates methods for your standard get/set accessors. It also provides you
+with some hooks to massage the values being loaded or stored.
 
 When you fetch a record value by calling
 C<$my_record-E<gt>some_field>, C<Jifty::DBI::Record> provides the
@@ -841,6 +846,10 @@ sub __value {
     return unless $column;
 
     my $column_name = $column->{name}; # Speed optimization
+
+    if ($column->computed) {
+        return $self->$column_name;
+    }
 
     # In the default case of "yeah, we have a value", return it as
     # fast as we can.
@@ -1061,6 +1070,7 @@ whose primary key is $id.
 sub load {
     my $self = shift;
     return unless @_ and defined $_[0];
+    Carp::carp("load called with more than one argument. Did you mean load_by_cols?") if @_ > 1;
 
     return $self->load_by_cols( id => shift );
 }
@@ -1336,7 +1346,7 @@ return value is ignored regardless.
 
 This method is called after attempting to insert the record into the
 database. It gets handed a reference to the return value of the
-insert. That'll either be a true value or a L<Class::ReturnValue>.
+insert. That will either be a true value or a L<Class::ReturnValue>.
 
 Aborting the trigger merely causes C<create> to return a false
 (undefined) value even thought he create may have succeeded. This
