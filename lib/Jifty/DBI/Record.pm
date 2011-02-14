@@ -349,8 +349,12 @@ sub _init_methods_for_column {
                         my $self = shift;
                         my $val  = shift;
 
-                        $val = $val->id
-                            if UNIVERSAL::isa( $val, 'Jifty::DBI::Record' );
+                        if (UNIVERSAL::isa( $val, 'Jifty::DBI::Record' )) {
+                            my $col = $self->column($column_name);
+                            my $by  = defined $col->by ? $col->by : 'id';
+                            $val = $val->$by;
+                        }
+
                         return (
                             $self->_set(
                                 column => $column_name,
@@ -569,18 +573,9 @@ sub columns {
     my $self = shift;
     return @{
         $self->_COLUMNS_CACHE() || $self->_COLUMNS_CACHE(
-            [   sort {
-                    ( ( ( $b->type || '' ) eq 'serial' )
-                        <=> ( ( $a->type || '' ) eq 'serial' ) )
-                        or (
-                        ( $a->sort_order || 0 ) <=> ( $b->sort_order || 0 ) )
-                        or ( $a->name cmp $b->name )
-                    } grep {
-                    $_->active
-                    } values %{ $self->_columns_hashref }
-            ]
+            [ grep { $_->active } $self->all_columns ]
         )
-        };
+    };
 }
 
 =head2 all_columns
@@ -596,11 +591,10 @@ sub all_columns {
 
     # Not cached because it's not expected to be used often
     return sort {
-        ( ( ( $b->type || '' ) eq 'serial' )
-            <=> ( ( $a->type || '' ) eq 'serial' ) )
-            or ( ( $a->sort_order || 0 ) <=> ( $b->sort_order || 0 ) )
-            or ( $a->name cmp $b->name )
-    } values %{ $self->_columns_hashref || {} };
+        ((($b->type || '') eq 'serial') <=> (($a->type || '') eq 'serial'))
+        or       (($a->sort_order || 0) <=> ($b->sort_order || 0))
+        or                   ( $a->name cmp $b->name )
+    } values %{ $self->_columns_hashref }
 }
 
 sub _columns_hashref {
@@ -919,6 +913,9 @@ sub _set {
     );
     return $ok if ( not defined $ok );
 
+    # Fetch the old value for the benefit of the triggers
+    my $old_value = $self->_value( $args{column} );
+
     $ok = $self->__set(%args);
     return $ok if not $ok;
 
@@ -928,13 +925,13 @@ sub _set {
     # Call the general after_set triggers
     $self->_run_callback(
         name => "after_set",
-        args => { column => $args{column}, value => $value },
+        args => { column => $args{column}, value => $value, old_value => $old_value },
     );
 
     # Call the specific after_set_column triggers
     $self->_run_callback(
         name => "after_set_" . $args{column},
-        args => { column => $args{column}, value => $value },
+        args => { column => $args{column}, value => $value, old_value => $old_value },
     );
 
     return $ok;
@@ -1130,9 +1127,8 @@ sub load_by_cols {
             }
 
             if ( blessed $value && $value->isa('Jifty::DBI::Record') ) {
-
-                # XXX TODO: check for proper foriegn keyness here
-                $value = $value->id;
+                my $by  = defined $column_obj->by ? $column_obj->by : 'id';
+                $value = $value->$by;
             }
 
             $self->_apply_input_filters(
@@ -1404,11 +1400,12 @@ sub __create {
         }
         if (    $column->readable
             and $column->refers_to
-            and UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" ) )
+            and UNIVERSAL::isa( $column->refers_to, "Jifty::DBI::Record" )
+            and UNIVERSAL::isa( $attribs{$column_name}, 'Jifty::DBI::Record' ) )
         {
-            $attribs{$column_name} = $attribs{$column_name}->id
-                if UNIVERSAL::isa( $attribs{$column_name},
-                'Jifty::DBI::Record' );
+            # lookup the column referenced or default to id
+            my $by = defined $column->by ? $column->by : 'id';
+            $attribs{$column_name} = $attribs{$column_name}->$by;
         }
 
         $self->_apply_input_filters(
