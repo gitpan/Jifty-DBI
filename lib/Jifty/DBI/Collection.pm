@@ -1253,15 +1253,6 @@ sub limit {
 
     # }}}
 
-    # Set this to the name of the column and the alias, unless we've been
-    # handed a subclause name
-
-    my $qualified_column
-        = $args{'alias'}
-        ? $args{'alias'} . "." . $args{'column'}
-        : $args{'column'};
-    my $clause_id = $args{'subclause'} || $qualified_column;
-
     # $column_obj is undefined when the table2 argument to the join is a table
     # name and not a collection model class.  In that case, the class key
     # doesn't exist for the join.
@@ -1277,6 +1268,43 @@ sub limit {
         column    => $column_obj,
         value_ref => \$args{'value'},
     ) if $column_obj && $column_obj->encode_on_select && $args{operator} !~ /IS/;
+
+    # Ensure that the column has nothing fishy going on.  We can't
+    # simply check $column_obj's truth because joins mostly join by
+    # table name, not class, and we don't track table_name -> class.
+    if ($args{column} =~ /\W/) {
+        warn "Possible SQL injection on column '$args{column}' in limit at @{[join(',',(caller)[1,2])]}\n";
+        %args = (
+            %args,
+            column   => 'id',
+            operator => '<',
+            value    => 0,
+        );
+    }
+    if ($args{operator} !~ /^(=|<|>|!=|<>|<=|>=
+                             |(NOT\s*)?LIKE
+                             |(NOT\s*)?(STARTS|ENDS)_?WITH
+                             |(NOT\s*)?MATCHES
+                             |IS(\s*NOT)?
+                             |IN)$/ix) {
+        warn "Unknown operator '$args{operator}' in limit at  @{[join(',',(caller)[1,2])]}\n";
+        %args = (
+            %args,
+            column   => 'id',
+            operator => '<',
+            value    => 0,
+        );
+    }
+
+
+    # Set this to the name of the column and the alias, unless we've been
+    # handed a subclause name
+    my $qualified_column
+        = $args{'alias'}
+        ? $args{'alias'} . "." . $args{'column'}
+        : $args{'column'};
+    my $clause_id = $args{'subclause'} || $qualified_column;
+
 
     # make passing in an object DTRT
     my $value_ref = ref( $args{value} );
@@ -1308,27 +1336,28 @@ sub limit {
     #since we're changing the search criteria, we need to redo the search
     $self->redo_search();
 
-    if ( $args{'column'} ) {
+    #If it's a like, we supply the %s around the search term
+    if ( $args{'operator'} =~ /MATCHES/i ) {
+        $args{'value'} = "%" . $args{'value'} . "%";
+    } elsif ( $args{'operator'} =~ /STARTS_?WITH/i ) {
+        $args{'value'} = $args{'value'} . "%";
+    } elsif ( $args{'operator'} =~ /ENDS_?WITH/i ) {
+        $args{'value'} = "%" . $args{'value'};
+    }
+    $args{'operator'} =~ s/(?:MATCHES|ENDS_?WITH|STARTS_?WITH)/LIKE/i;
 
-        #If it's a like, we supply the %s around the search term
-        if ( $args{'operator'} =~ /MATCHES/i ) {
-            $args{'value'} = "%" . $args{'value'} . "%";
-        } elsif ( $args{'operator'} =~ /STARTS_?WITH/i ) {
-            $args{'value'} = $args{'value'} . "%";
-        } elsif ( $args{'operator'} =~ /ENDS_?WITH/i ) {
-            $args{'value'} = "%" . $args{'value'};
-        }
-        $args{'operator'} =~ s/(?:MATCHES|ENDS_?WITH|STARTS_?WITH)/LIKE/i;
+    # Force the value to NULL (non-quoted) if the operator is IS.
+    if ($args{'operator'} =~ /^IS(\s*NOT)?$/i) {
+        $args{'quote_value'} = 0;
+        $args{'value'} = 'NULL';
+    }
 
-        #if we're explicitly told not to to quote the value or
-        # we're doing an IS or IS NOT (null), don't quote the operator.
-
-        if ( $args{'quote_value'} && $args{'operator'} !~ /IS/i ) {
-            if ( $value_ref eq 'ARRAY' ) {
-                map { $_ = $self->_handle->quote_value($_) } @{ $args{'value'} };
-            } else {
-                $args{'value'} = $self->_handle->quote_value( $args{'value'} );
-            }
+    # Quote the value
+    if ( $args{'quote_value'} ) {
+        if ( $value_ref eq 'ARRAY' ) {
+            map { $_ = $self->_handle->quote_value($_) } @{ $args{'value'} };
+        } else {
+            $args{'value'} = $self->_handle->quote_value( $args{'value'} );
         }
     }
 
@@ -1667,6 +1696,10 @@ sub _order_clause {
         } elsif ( ( defined $rowhash{'alias'} )
             and ( $rowhash{'column'} ) )
         {
+            if ($rowhash{'column'} =~ /\W/) {
+                warn "Possible SQL injection in column '$rowhash{column}' in order_by\n";
+                next;
+            }
 
             $clause .= ( $clause ? ", " : " " );
             $clause .= $rowhash{'function'} . "(" if $rowhash{'function'};
@@ -1751,6 +1784,10 @@ sub _group_clause {
         } elsif ( ( $rowhash{'alias'} )
             and ( $rowhash{'column'} ) )
         {
+            if ($rowhash{'column'} =~ /\W/) {
+                warn "Possible SQL injection in column '$rowhash{column}' in group_by\n";
+                next;
+            }
 
             $clause .= ( $clause ? ", " : " " );
             $clause .= $rowhash{'alias'} . ".";
